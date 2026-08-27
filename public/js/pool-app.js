@@ -85,6 +85,16 @@ function fmtMoney(n) {
   return `$${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 0 })}`;
 }
 
+// "#12 · Team Name" — either part is optional; falls back to "—".
+function teamLabel(p) {
+  const parts = [];
+  if (p.team_number !== null && p.team_number !== undefined && String(p.team_number).trim() !== "") {
+    parts.push(`#${String(p.team_number).trim()}`);
+  }
+  if (p.team && p.team !== "—") parts.push(p.team);
+  return parts.join(" · ") || "—";
+}
+
 function uuid() {
   return crypto.randomUUID ? crypto.randomUUID() : "id-" + Math.random().toString(36).slice(2, 12);
 }
@@ -141,20 +151,40 @@ async function saveConfig(next) {
   render();
 }
 
-async function addPlayer(name, team) {
-  const p = { id: uuid(), name, team: team || "—", active: true };
+async function addPlayer(name, teamNumber, team) {
+  const p = { id: uuid(), name, team_number: teamNumber || null, team: team || "—", active: true };
   state.players.push(p);
   await idb.put("players", p);
   Sync.enqueue({ type: "player.create", payload: p });
   render();
 }
 
-async function toggleActive(id) {
+async function setActive(id, active) {
   const p = state.players.find((x) => x.id === id);
   if (!p) return;
-  p.active = p.active === false ? true : false;
+  p.active = active;
   await idb.put("players", p);
-  Sync.enqueue({ type: "player.update", payload: { id, active: p.active } });
+  Sync.enqueue({ type: "player.update", payload: { id, active } });
+  render();
+}
+
+async function importPlayersFromFile(file) {
+  if (!file) return;
+  state._importMsg = { text: "Importing…" };
+  render();
+  try {
+    const res = await Sync.uploadPlayerImport(file);
+    const incoming = res.players || [];
+    if (incoming.length) {
+      await idb.putMany("players", incoming);
+      const byId = new Map(state.players.map((p) => [p.id, p]));
+      incoming.forEach((p) => byId.set(p.id, p));
+      state.players = [...byId.values()];
+    }
+    state._importMsg = { ok: true, text: `${res.imported} imported, ${res.skipped} skipped` };
+  } catch (e) {
+    state._importMsg = { ok: false, text: e.message || "Import failed" };
+  }
   render();
 }
 
@@ -253,7 +283,7 @@ function renderDashboard() {
         <button class="row-card" data-action="open-pay" data-player="${p.id}" data-week="${state.week}">
           <div>
             <div class="row-title">${escapeHtml(p.name)}</div>
-            <div class="dim-sm">${escapeHtml(p.team)}</div>
+            <div class="dim-sm">${escapeHtml(teamLabel(p))}</div>
           </div>
           ${statusPill(e?.status, e?.amount)}
         </button>`;
@@ -292,7 +322,7 @@ function renderPayModal(playerId, week) {
   return `
   <div class="modal-header"><h2>${escapeHtml(player.name)}</h2><button class="icon-btn" data-action="close-modal">&times;</button></div>
   <div class="modal-body">
-    <div class="dim-sm mb-3">${escapeHtml(player.team)} · Week ${week}</div>
+    <div class="dim-sm mb-3">${escapeHtml(teamLabel(player))} · Week ${week}</div>
     ${isCatchUp ? `
       <div class="alert-box">
         No entries on record for ${escapeHtml(player.name)}.
@@ -360,7 +390,7 @@ function renderDrawModal(week) {
     <div class="scroll-list mb-3">
       ${eligible.map((p) => `
         <button class="pick-row ${selected === p.id ? "pick-row-active" : ""}" data-action="pick-winner" data-id="${p.id}">
-          <span>${escapeHtml(p.name)}</span><span class="dim-sm">${escapeHtml(p.team)}</span>
+          <span>${escapeHtml(p.name)}</span><span class="dim-sm">${escapeHtml(teamLabel(p))}</span>
         </button>`).join("") || `<div class="empty-note">No matches</div>`}
     </div>
 
@@ -384,7 +414,9 @@ function renderAddPlayerModal() {
   <div class="modal-body">
     <label class="label-xs">Name (Last, First)</label>
     <input class="input" id="new-player-name" autofocus />
-    <label class="label-xs">Team</label>
+    <label class="label-xs">Team number</label>
+    <input class="input" id="new-player-team-number" inputmode="numeric" />
+    <label class="label-xs">Team name</label>
     <input class="input" id="new-player-team" />
     <button class="btn btn-green w-full mt-2" data-action="submit-add-player">Add to roster</button>
   </div>`;
@@ -414,12 +446,23 @@ function renderRoster() {
   if (state.openPlayerId) return renderPlayerDetail(state.openPlayerId);
 
   const query = state._rosterQuery || "";
+  const importMsg = state._importMsg
+    ? `<div class="import-note ${state._importMsg.ok === false ? "import-note-err" : ""} ${state._importMsg.ok ? "import-note-ok" : ""}">${escapeHtml(state._importMsg.text)}</div>`
+    : "";
+  const importBtn = `
+    <label class="btn btn-outline import-btn">
+      Import from Excel (.xlsx)
+      <input type="file" id="xlsx-input" accept=".xlsx" hidden />
+    </label>`;
+
   if (state.players.length === 0) {
     return `
     <div class="px-4 pt-8 pb-24 text-center">
       <h2 class="section-title">No roster yet</h2>
-      <p class="dim-sm mb-4">Import last season's ${ROSTER_SEED.length} names (with team, and who was actively playing), or start from a blank roster and add people yourself.</p>
+      <p class="dim-sm mb-4">Import a roster spreadsheet (name, team number, team), import last season's ${ROSTER_SEED.length} names, or add players by hand.</p>
+      ${importMsg}
       <div class="stack-narrow">
+        ${importBtn}
         <button class="btn btn-green" data-action="import-roster">Import last season's roster</button>
         <button class="btn btn-outline" data-action="open-add-player">Add a player manually</button>
       </div>
@@ -433,15 +476,20 @@ function renderRoster() {
       <h2 class="section-title">Roster</h2>
       <button class="btn btn-brass" data-action="open-add-player">+ Add player</button>
     </div>
+    <div class="mb-3">${importBtn}</div>
+    ${importMsg}
     <input class="input mb-3" placeholder="Search roster…" value="${escapeHtml(query)}" data-action="roster-search" />
     <div class="list">
       ${filtered.map((p) => `
         <div class="row-card row-card-static ${p.active === false ? "row-dim" : ""}">
           <button class="row-title-btn" data-action="open-player" data-id="${p.id}">
             <div class="row-title">${escapeHtml(p.name)}</div>
-            <div class="dim-sm">${escapeHtml(p.team)}</div>
+            <div class="dim-sm">${escapeHtml(teamLabel(p))}</div>
           </button>
-          <button class="chip" data-action="toggle-active" data-id="${p.id}">${p.active === false ? "Inactive" : "Active"}</button>
+          <label class="switch" title="${p.active === false ? "Inactive" : "Active"}">
+            <input type="checkbox" data-action="toggle-active" data-id="${p.id}" ${p.active === false ? "" : "checked"} />
+            <span class="switch-slider"></span>
+          </label>
         </div>`).join("")}
     </div>
   </div>`;
@@ -455,7 +503,7 @@ function renderPlayerDetail(playerId) {
   <div class="px-4 pt-4 pb-24">
     <button class="back-link" data-action="close-player">&#8592; Back</button>
     <h2 class="section-title">${escapeHtml(player.name)}</h2>
-    <div class="dim-sm mb-3">${escapeHtml(player.team)}</div>
+    <div class="dim-sm mb-3">${escapeHtml(teamLabel(player))}</div>
     <div class="card center mb-4">
       <div class="label-xs">Total paid this season</div>
       <div class="pot-amount">${fmtMoney(total)}</div>
@@ -516,7 +564,7 @@ function renderHistoryTotals(weeks) {
       <div class="row-card row-card-static">
         <div class="row-flex">
           <span class="dim-sm rank">${i + 1}</span>
-          <div><div class="row-title">${escapeHtml(p.name)}</div><div class="dim-sm">${escapeHtml(p.team)}</div></div>
+          <div><div class="row-title">${escapeHtml(p.name)}</div><div class="dim-sm">${escapeHtml(teamLabel(p))}</div></div>
         </div>
         <div class="amount-strong">${fmtMoney(total)}</div>
       </div>`).join("")}
@@ -616,6 +664,7 @@ document.addEventListener("click", async (e) => {
     case "nav":
       state.tab = el.dataset.tab;
       state.openPlayerId = null;
+      state._importMsg = null;
       render();
       break;
     case "week-prev": state.week -= 1; render(); break;
@@ -649,9 +698,7 @@ document.addEventListener("click", async (e) => {
     case "import-roster":
       await importRoster();
       break;
-    case "toggle-active":
-      await toggleActive(el.dataset.id);
-      break;
+    // "toggle-active" is handled on the 'change' event below (checkbox).
     case "goto-week":
       state.week = Number(el.dataset.week);
       state.tab = "dashboard";
@@ -694,9 +741,10 @@ document.addEventListener("click", async (e) => {
     }
     case "submit-add-player": {
       const name = document.getElementById("new-player-name").value.trim();
+      const teamNumber = document.getElementById("new-player-team-number").value.trim();
       const team = document.getElementById("new-player-team").value.trim();
       if (!name) return;
-      await addPlayer(name, team);
+      await addPlayer(name, teamNumber, team);
       closeModal();
       state.tab = "roster";
       render();
@@ -743,6 +791,20 @@ document.addEventListener("input", (e) => {
   if (el.dataset && el.dataset.action === "draw-search") { state._drawQuery = el.value; refreshDrawList(); }
   if (el.dataset && el.dataset.action === "custom-numweeks") { const v = parseInt(el.value || "0", 10); if (v > 0) applyNumWeeks(v); }
   if (el.id === "pay-amount") { /* custom amount typed — leave as-is, read at submit time */ }
+});
+
+// 'change' bindings — checkboxes and file inputs (they don't fire click-vs-label
+// cleanly, and file pickers only report a selection via 'change').
+document.addEventListener("change", async (e) => {
+  const el = e.target;
+  if (el.dataset && el.dataset.action === "toggle-active") {
+    await setActive(el.dataset.id, el.checked);
+  }
+  if (el.id === "xlsx-input") {
+    const file = el.files && el.files[0];
+    el.value = ""; // let the same file be re-picked later
+    await importPlayersFromFile(file);
+  }
 });
 
 // Re-render just the dashboard list on search keystrokes so the input doesn't lose focus.

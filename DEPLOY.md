@@ -76,8 +76,12 @@ season) but there's no reason to run it every push.
 
 - Visit `https://bowl.thecommish.app/` → redirects to `/login`.
 - Sign in, go to `/password`, set a real password.
-- Open `/pool`, and on the Roster tab press **Import last season's roster**
-  (this creates ~100 players client-side and syncs them up).
+- Open `/pool` and populate the roster from the Roster tab, either:
+  - **Import from Excel (.xlsx)** — a spreadsheet with name in column 1,
+    team number in column 2, team name in column 4 (a header row is fine);
+    exact `name + team_number + team` duplicates are skipped, and it reports
+    "X imported, Y skipped", or
+  - **Import last season's roster** — the ~100 names embedded in the app.
 - "Add to Home Screen" to install the PWA. Do this while signed in so the
   service worker caches an authenticated shell.
 

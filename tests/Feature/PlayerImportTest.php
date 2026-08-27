@@ -1,0 +1,136 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\Player;
+use App\Models\Season;
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use Tests\TestCase;
+
+class PlayerImportTest extends TestCase
+{
+    use RefreshDatabase;
+
+    private Season $season;
+    private User $operator;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->season = Season::create([
+            'label' => '2026 Second Game Pool', 'entry_fee' => 1, 'start_week' => 1, 'total_weeks' => 33,
+        ]);
+        $this->operator = User::factory()->create();
+    }
+
+    public function test_import_requires_authentication(): void
+    {
+        $this->postJson('/api/players/import')->assertUnauthorized();
+    }
+
+    public function test_it_imports_players_and_reports_counts(): void
+    {
+        // col 1 = name, col 2 = team_number, col 3 = (ignored), col 4 = team
+        $file = $this->xlsx([
+            ['Name', 'Team #', 'Avg', 'Team'],            // header, skipped
+            ['Bell, Bob', 4, '182', 'Team 4'],
+            ['Bell, Ingrid', 4, '151', 'Team 4'],
+            ['Bell, Bob', 4, '182', 'Team 4'],            // duplicate within the file
+            ['', 9, '', 'Team 9'],                        // blank name, skipped
+            ['Stokes, Joe', 2, '164', 'Team 2'],
+        ]);
+
+        $response = $this->actingAs($this->operator)
+            ->post('/api/players/import', ['file' => $file], ['Accept' => 'application/json'])
+            ->assertOk();
+
+        $response->assertJson(['imported' => 3, 'skipped' => 1]);
+        $this->assertCount(3, $response->json('players'));
+
+        $this->assertDatabaseCount('players', 3);
+        $this->assertDatabaseHas('players', [
+            'name' => 'Bell, Bob', 'team_number' => '4', 'team' => 'Team 4', 'active' => true, 'season_id' => $this->season->id,
+        ]);
+        $this->assertDatabaseHas('players', ['name' => 'Stokes, Joe', 'team_number' => '2', 'team' => 'Team 2']);
+    }
+
+    public function test_it_skips_rows_that_already_exist_in_the_season(): void
+    {
+        Player::create([
+            'season_id' => $this->season->id, 'name' => 'Bell, Bob', 'team_number' => '4', 'team' => 'Team 4', 'active' => false,
+        ]);
+
+        $file = $this->xlsx([
+            ['Bell, Bob', 4, '', 'Team 4'],   // exact match -> skipped (and NOT reactivated)
+            ['Bell, Bob', 5, '', 'Team 4'],   // different team_number -> imported
+        ]);
+
+        $this->actingAs($this->operator)
+            ->post('/api/players/import', ['file' => $file], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->assertJson(['imported' => 1, 'skipped' => 1]);
+
+        $this->assertDatabaseCount('players', 2);
+        // the pre-existing inactive row is untouched
+        $this->assertDatabaseHas('players', ['name' => 'Bell, Bob', 'team_number' => '4', 'active' => false]);
+        $this->assertDatabaseHas('players', ['name' => 'Bell, Bob', 'team_number' => '5', 'active' => true]);
+    }
+
+    public function test_reimporting_the_same_file_imports_nothing(): void
+    {
+        $rows = [
+            ['Aponte, Juan', 13, '', 'Team 13'],
+            ['Austile, Darian', 1, '', 'Terminators'],
+        ];
+
+        $this->actingAs($this->operator)
+            ->post('/api/players/import', ['file' => $this->xlsx($rows)], ['Accept' => 'application/json'])
+            ->assertOk()->assertJson(['imported' => 2, 'skipped' => 0]);
+
+        $this->actingAs($this->operator)
+            ->post('/api/players/import', ['file' => $this->xlsx($rows)], ['Accept' => 'application/json'])
+            ->assertOk()->assertJson(['imported' => 0, 'skipped' => 2]);
+
+        $this->assertDatabaseCount('players', 2);
+    }
+
+    public function test_a_non_spreadsheet_upload_is_rejected_clearly(): void
+    {
+        $junk = UploadedFile::fake()->createWithContent('roster.xlsx', 'not a spreadsheet at all');
+
+        $this->actingAs($this->operator)
+            ->post('/api/players/import', ['file' => $junk], ['Accept' => 'application/json'])
+            ->assertStatus(422)
+            ->assertJson(['message' => 'Could not read that spreadsheet.']);
+    }
+
+    /**
+     * @param  list<list<mixed>>  $rows
+     */
+    private function xlsx(array $rows): UploadedFile
+    {
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+
+        foreach ($rows as $r => $row) {
+            foreach ($row as $c => $value) {
+                $sheet->setCellValue([$c + 1, $r + 1], $value);
+            }
+        }
+
+        $path = tempnam(sys_get_temp_dir(), 'import_').'.xlsx';
+        (new Xlsx($spreadsheet))->save($path);
+
+        return new UploadedFile(
+            $path,
+            'roster.xlsx',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            null,
+            true,
+        );
+    }
+}

@@ -23,6 +23,7 @@
 const ROUTES = {
   bundle: (seasonId) => `/api/seasons/${seasonId}/bundle`,
   players: () => `/api/players`,
+  playerImport: () => `/api/players/import`,
   player: (id) => `/api/players/${id}`,
   entryUpsert: () => `/api/entries`,
   entryDelete: (playerId, week) => `/api/entries/${playerId}/${week}`,
@@ -119,6 +120,25 @@ const Sync = {
       const remaining = await this.pendingCount();
       notify({ event: "done", pending: remaining });
     }
+  },
+
+  // Uploads an .xlsx roster to the server for import. This is an online-only,
+  // one-shot action (not part of the offline queue) — the server does the
+  // parsing/dedup and returns { imported, skipped, players: [...] }.
+  async uploadPlayerImport(file) {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(ROUTES.playerImport(), {
+      method: "POST",
+      headers: { "X-CSRF-TOKEN": csrfToken(), Accept: "application/json" },
+      body: form,
+    });
+    let body = null;
+    try { body = await res.json(); } catch (e) { /* ignore */ }
+    if (!res.ok) {
+      throw new Error((body && body.message) || `Import failed (${res.status})`);
+    }
+    return body || { imported: 0, skipped: 0, players: [] };
   },
 
   // Pulls the full season bundle from the server and seeds local IndexedDB.

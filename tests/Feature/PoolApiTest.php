@@ -39,7 +39,7 @@ class PoolApiTest extends TestCase
     public function test_bundle_returns_the_frontend_shape(): void
     {
         $player = Player::create([
-            'season_id' => $this->season->id, 'name' => 'Bell, Bob', 'team' => 'Team 4', 'active' => true,
+            'season_id' => $this->season->id, 'name' => 'Bell, Bob', 'team_number' => '4', 'team' => 'Team 4', 'active' => true,
         ]);
         Entry::create([
             'player_id' => $player->id, 'week_number' => 1, 'status' => 'paid', 'amount' => 1, 'note' => '',
@@ -59,7 +59,7 @@ class PoolApiTest extends TestCase
                     'totalWeeks' => 33,
                 ],
                 'players' => [
-                    ['id' => $player->id, 'name' => 'Bell, Bob', 'team' => 'Team 4', 'active' => true],
+                    ['id' => $player->id, 'name' => 'Bell, Bob', 'team_number' => '4', 'team' => 'Team 4', 'active' => true],
                 ],
                 'entries' => [
                     ['id' => $player->id.':1', 'player_id' => $player->id, 'week' => 1, 'amount' => 1, 'status' => 'paid'],
@@ -73,13 +73,15 @@ class PoolApiTest extends TestCase
     public function test_create_player_is_idempotent_on_client_uuid(): void
     {
         $id = (string) Str::uuid();
-        $body = ['id' => $id, 'name' => 'New, Player', 'team' => 'Subs', 'active' => true];
+        $body = ['id' => $id, 'name' => 'New, Player', 'team_number' => '7', 'team' => 'Subs', 'active' => true];
 
-        $this->actingAs($this->operator)->postJson('/api/players', $body)->assertCreated();
+        $this->actingAs($this->operator)->postJson('/api/players', $body)
+            ->assertCreated()
+            ->assertJson(['id' => $id, 'name' => 'New, Player', 'team_number' => '7', 'team' => 'Subs']);
         $this->actingAs($this->operator)->postJson('/api/players', $body)->assertCreated(); // retry, no dupe
 
         $this->assertDatabaseCount('players', 1);
-        $this->assertDatabaseHas('players', ['id' => $id, 'season_id' => $this->season->id]);
+        $this->assertDatabaseHas('players', ['id' => $id, 'season_id' => $this->season->id, 'team_number' => '7', 'team' => 'Subs']);
     }
 
     public function test_entry_upsert_maps_week_to_week_number_and_upserts(): void

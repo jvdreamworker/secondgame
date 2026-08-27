@@ -23,6 +23,7 @@ class Player extends Model
         'id',
         'season_id',
         'name',
+        'team_number',
         'team',
         'active',
     ];

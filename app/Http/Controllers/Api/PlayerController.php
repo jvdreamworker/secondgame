@@ -21,6 +21,7 @@ class PlayerController extends Controller
         $data = $request->validate([
             'id' => ['required', 'uuid'],
             'name' => ['required', 'string', 'max:255'],
+            'team_number' => ['nullable', 'string', 'max:255'],
             'team' => ['nullable', 'string', 'max:255'],
             'active' => ['sometimes', 'boolean'],
         ]);
@@ -33,6 +34,7 @@ class PlayerController extends Controller
             [
                 'season_id' => $season->id,
                 'name' => $data['name'],
+                'team_number' => $data['team_number'] ?? null,
                 'team' => $data['team'] ?? '—',
                 'active' => $data['active'] ?? true,
             ],
@@ -50,6 +52,7 @@ class PlayerController extends Controller
     {
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
+            'team_number' => ['sometimes', 'nullable', 'string', 'max:255'],
             'team' => ['sometimes', 'nullable', 'string', 'max:255'],
             'active' => ['sometimes', 'boolean'],
         ]);
@@ -64,6 +67,7 @@ class PlayerController extends Controller
         return [
             'id' => $player->id,
             'name' => $player->name,
+            'team_number' => $player->team_number,
             'team' => $player->team ?? '—',
             'active' => (bool) $player->active,
         ];

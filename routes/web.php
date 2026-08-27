@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\BundleController;
 use App\Http\Controllers\Api\ConfigController;
 use App\Http\Controllers\Api\EntryController;
 use App\Http\Controllers\Api\PlayerController;
+use App\Http\Controllers\Api\PlayerImportController;
 use App\Http\Controllers\Api\WeeklyResultController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\PasswordController;
@@ -33,6 +34,7 @@ Route::middleware('auth')->group(function () {
         Route::get('seasons/{season}/stats', [BundleController::class, 'stats']);
 
         Route::post('players', [PlayerController::class, 'store']);
+        Route::post('players/import', [PlayerImportController::class, 'store']);
         Route::patch('players/{player}', [PlayerController::class, 'update']);
 
         Route::put('entries', [EntryController::class, 'upsert']);

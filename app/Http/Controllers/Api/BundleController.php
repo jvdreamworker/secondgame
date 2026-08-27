@@ -22,10 +22,11 @@ class BundleController extends Controller
     {
         $players = $season->players()
             ->orderBy('name')
-            ->get(['id', 'name', 'team', 'active'])
+            ->get(['id', 'name', 'team_number', 'team', 'active'])
             ->map(fn ($p) => [
                 'id' => $p->id,
                 'name' => $p->name,
+                'team_number' => $p->team_number,
                 'team' => $p->team ?? '—',
                 'active' => (bool) $p->active,
             ])
