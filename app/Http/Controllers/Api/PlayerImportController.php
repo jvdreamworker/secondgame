@@ -59,6 +59,9 @@ class PlayerImportController extends Controller
         $seenInFile = [];
 
         foreach ($rows as $row) {
+            // Column 1 is the whole name, stored exactly as it appears in the
+            // sheet ("Last, First"). Never split or reformat it — the comma is
+            // part of the name, not a delimiter.
             $name = $this->cell($row, 0);
             $teamNumber = $this->cell($row, 1);
             $team = $this->cell($row, 3);

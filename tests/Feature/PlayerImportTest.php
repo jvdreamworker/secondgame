@@ -58,6 +58,31 @@ class PlayerImportTest extends TestCase
         $this->assertDatabaseHas('players', ['name' => 'Stokes, Joe', 'team_number' => '2', 'team' => 'Team 2']);
     }
 
+    public function test_column_one_is_stored_verbatim_as_the_full_name(): void
+    {
+        // Names arrive "Last, First". The whole cell is the player name — it is
+        // never split on the comma, and column 2 stays the team number.
+        $file = $this->xlsx([
+            ['Barber, Jb', 7, '175', 'Pin Pals'],
+            ['Van Der Berg, Mary Ann', 3, '140', 'Team 3'],
+        ]);
+
+        $this->actingAs($this->operator)
+            ->post('/api/players/import', ['file' => $file], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->assertJson(['imported' => 2, 'skipped' => 0]);
+
+        $this->assertDatabaseHas('players', [
+            'name' => 'Barber, Jb', 'team_number' => '7', 'team' => 'Pin Pals',
+        ]);
+        $this->assertDatabaseHas('players', [
+            'name' => 'Van Der Berg, Mary Ann', 'team_number' => '3', 'team' => 'Team 3',
+        ]);
+        $this->assertDatabaseMissing('players', ['name' => 'Barber']);
+        $this->assertDatabaseMissing('players', ['name' => 'Jb']);
+        $this->assertDatabaseMissing('players', ['team_number' => 'Jb']);
+    }
+
     public function test_it_skips_rows_that_already_exist_in_the_season(): void
     {
         Player::create([

@@ -85,6 +85,22 @@ season) but there's no reason to run it every push.
 - "Add to Home Screen" to install the PWA. Do this while signed in so the
   service worker caches an authenticated shell.
 
+## Cleaning up split-name imports
+
+An earlier build of the XLSX import could split `"Last, First"` names on the
+comma, leaving players with just a last name (and a polluted team number). The
+import now stores column 1 verbatim. To remove the bad rows so the roster can be
+re-imported cleanly, over SSH:
+
+```
+cd /home/forge/bowl.thecommish.app
+php artisan players:purge-split-names            # dry run — lists what it would delete
+php artisan players:purge-split-names --force    # delete them
+```
+
+It only touches players whose name has no comma, and skips any that already have
+entries or are recorded as a week's winner (those must be fixed by hand).
+
 ## Static assets / PWA notes
 
 - `public/service-worker.js` and `public/manifest.json` are served from the
