@@ -20,16 +20,29 @@ class PlayerImportController extends Controller
      * already exists — either in this season or earlier in the same file.
      * Everything imported is set active.
      *
-     * Response: { imported, skipped, players: [ ...bundle player shape... ] }
+     * Pass replace=1 to wipe the season's existing roster first (this also
+     * deletes those players' entries and clears them from any weekly result).
+     *
+     * Response: { imported, skipped, replaced, players: [ ...bundle player shape... ] }
      */
     public function store(Request $request): JsonResponse
     {
         $request->validate([
             'file' => ['required', 'file', 'max:5120'],
+            'replace' => ['sometimes', 'boolean'],
         ]);
 
         $season = Season::current();
         abort_if($season === null, 409, 'No season configured.');
+
+        $replaced = 0;
+        if ($request->boolean('replace')) {
+            // Delete row-by-row so FKs fire: entries cascade away, and
+            // weekly_results.winner_player_id is nulled.
+            $current = $season->players()->get();
+            $current->each->delete();
+            $replaced = $current->count();
+        }
 
         $path = $request->file('file')->getRealPath();
         $reader = new XlsxReader();
@@ -99,6 +112,7 @@ class PlayerImportController extends Controller
         return response()->json([
             'imported' => $imported,
             'skipped' => $skipped,
+            'replaced' => $replaced,
             'players' => $created,
         ]);
     }

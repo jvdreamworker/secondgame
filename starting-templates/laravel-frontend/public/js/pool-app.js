@@ -168,20 +168,31 @@ async function setActive(id, active) {
   render();
 }
 
-async function importPlayersFromFile(file) {
+async function importPlayersFromFile(file, replace = false) {
   if (!file) return;
-  state._importMsg = { text: "Importing…" };
+  if (replace && state.players.length &&
+      !confirm(`Replace the current roster? This deletes all ${state.players.length} players and their entries, then imports the file.`)) {
+    return;
+  }
+  state._importMsg = { text: replace ? "Replacing roster…" : "Importing…" };
   render();
   try {
-    const res = await Sync.uploadPlayerImport(file);
+    const res = await Sync.uploadPlayerImport(file, replace);
     const incoming = res.players || [];
-    if (incoming.length) {
+    if (replace) {
+      await idb.clear("players");
+      await idb.putMany("players", incoming);
+      state.players = incoming;
+    } else if (incoming.length) {
       await idb.putMany("players", incoming);
       const byId = new Map(state.players.map((p) => [p.id, p]));
       incoming.forEach((p) => byId.set(p.id, p));
       state.players = [...byId.values()];
     }
-    state._importMsg = { ok: true, text: `${res.imported} imported, ${res.skipped} skipped` };
+    const summary = replace
+      ? `${res.imported} imported (${res.replaced || 0} cleared), ${res.skipped} skipped`
+      : `${res.imported} imported, ${res.skipped} skipped`;
+    state._importMsg = { ok: true, text: summary };
   } catch (e) {
     state._importMsg = { ok: false, text: e.message || "Import failed" };
   }
@@ -476,7 +487,13 @@ function renderRoster() {
       <h2 class="section-title">Roster</h2>
       <button class="btn btn-brass" data-action="open-add-player">+ Add player</button>
     </div>
-    <div class="mb-3">${importBtn}</div>
+    <div class="mb-3">
+      ${importBtn}
+      <label class="checkbox-row mt-2">
+        <input type="checkbox" id="import-replace" />
+        <span>Replace current roster (clear all players first)</span>
+      </label>
+    </div>
     ${importMsg}
     <input class="input mb-3" placeholder="Search roster…" value="${escapeHtml(query)}" data-action="roster-search" />
     <div class="list">
@@ -803,7 +820,8 @@ document.addEventListener("change", async (e) => {
   if (el.id === "xlsx-input") {
     const file = el.files && el.files[0];
     el.value = ""; // let the same file be re-picked later
-    await importPlayersFromFile(file);
+    const replaceEl = document.getElementById("import-replace");
+    await importPlayersFromFile(file, !!(replaceEl && replaceEl.checked));
   }
 });
 

@@ -101,6 +101,17 @@ php artisan players:purge-split-names --force    # delete them
 It only touches players whose name has no comma, and skips any that already have
 entries or are recorded as a week's winner (those must be fixed by hand).
 
+To wipe the whole roster and start over (deletes every player in the season
+**and their entries**):
+
+```
+php artisan players:flush           # asks to confirm
+php artisan players:flush --force    # no prompt
+```
+
+Or, from the Roster screen, tick **"Replace current roster"** before choosing
+the .xlsx — the import clears the season's players first, then loads the file.
+
 ## Static assets / PWA notes
 
 - `public/service-worker.js` and `public/manifest.json` are served from the

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Entry;
 use App\Models\Player;
 use App\Models\Season;
 use App\Models\User;
@@ -121,6 +122,29 @@ class PlayerImportTest extends TestCase
             ->assertOk()->assertJson(['imported' => 0, 'skipped' => 2]);
 
         $this->assertDatabaseCount('players', 2);
+    }
+
+    public function test_replace_wipes_the_existing_roster_first(): void
+    {
+        $stale = Player::create([
+            'season_id' => $this->season->id, 'name' => 'Old, Player', 'team_number' => '1', 'team' => 'Team 1',
+        ]);
+        Entry::create(['player_id' => $stale->id, 'week_number' => 1, 'amount' => 1, 'status' => 'paid']);
+
+        $file = $this->xlsx([
+            ['Barber, Jb', 7, '175', 'Pin Pals'],
+            ['Chen, Amy', 7, '160', 'Pin Pals'],
+        ]);
+
+        $this->actingAs($this->operator)
+            ->post('/api/players/import', ['file' => $file, 'replace' => '1'], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->assertJson(['imported' => 2, 'skipped' => 0, 'replaced' => 1]);
+
+        $this->assertDatabaseCount('players', 2);
+        $this->assertDatabaseMissing('players', ['id' => $stale->id]);
+        $this->assertDatabaseMissing('entries', ['player_id' => $stale->id]);
+        $this->assertDatabaseHas('players', ['name' => 'Barber, Jb']);
     }
 
     public function test_a_non_spreadsheet_upload_is_rejected_clearly(): void

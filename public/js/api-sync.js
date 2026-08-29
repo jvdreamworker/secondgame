@@ -16,6 +16,7 @@
  *         (upsert by unique [player_id, week] — server returns canonical row)
  *   DELETE /api/entries/:player_id/:week
  *   PUT   /api/weekly-results/:week   body: { score, winner_player_id, payout, note }
+ *   POST  /api/players/import         multipart: file=<.xlsx>, replace=1 wipes the roster first
  *   PATCH /api/config                 body: { seasonLabel?, entryFee?, startWeek?, totalWeeks? }
  * ---------------------------------------------------------------------
  * Adjust ROUTES below if your backend uses different paths.
@@ -125,9 +126,10 @@ const Sync = {
   // Uploads an .xlsx roster to the server for import. This is an online-only,
   // one-shot action (not part of the offline queue) — the server does the
   // parsing/dedup and returns { imported, skipped, players: [...] }.
-  async uploadPlayerImport(file) {
+  async uploadPlayerImport(file, replace = false) {
     const form = new FormData();
     form.append("file", file);
+    if (replace) form.append("replace", "1");
     const res = await fetch(ROUTES.playerImport(), {
       method: "POST",
       headers: { "X-CSRF-TOKEN": csrfToken(), Accept: "application/json" },
