@@ -188,9 +188,11 @@ button, input { font-family: inherit; }
   display: flex; align-items: flex-end; justify-content: center;
 }
 .modal-sheet {
+  position: relative; z-index: 51;
   width: 100%; max-width: 480px; max-height: 92vh; overflow-y: auto;
   background: var(--surface); border: 1px solid var(--border); border-radius: 20px 20px 0 0;
 }
+.modal-sheet button, .modal-sheet input, .modal-sheet label, .modal-sheet a { position: relative; z-index: 1; }
 @media (min-width: 640px) {
   .modal-backdrop { align-items: center; padding: 16px; }
   .modal-sheet { border-radius: 20px; }

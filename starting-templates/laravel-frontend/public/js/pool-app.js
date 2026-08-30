@@ -705,9 +705,12 @@ function render() {
 
   const modalRoot = $modalRoot();
   if (modalRoot) {
+    // No inline onclick here — a strict CSP would drop it. The delegated
+    // 'backdrop' handler already ignores clicks whose target isn't the
+    // backdrop itself, so clicks inside the sheet never close the modal.
     modalRoot.innerHTML = state.modal
       ? `<div class="modal-backdrop" data-action="backdrop">
-           <div class="modal-sheet" onclick="event.stopPropagation()">${state.modal.html || ""}</div>
+           <div class="modal-sheet">${state.modal.html || ""}</div>
          </div>`
       : "";
   }
