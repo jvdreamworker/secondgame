@@ -116,8 +116,13 @@ the .xlsx — the import clears the season's players first, then loads the file.
 
 - `public/service-worker.js` and `public/manifest.json` are served from the
   site root — the SW scope is `/`, which is what it needs.
-- When you change anything in `public/js/`, `public/css/`, or the icons, bump
-  `CACHE_VERSION` in `public/service-worker.js` so clients pick up the new
-  files instead of a stale cache.
 - There is no `npm`/Vite build for the pool app — the files in `public/` are
   shipped as-is.
+- The pool page appends `?v=<file mtime>` to the CSS/JS URLs, so a `git pull`
+  on deploy busts the browser/HTTP cache automatically for online users. No
+  manual step needed for them.
+- For **offline** clients (installed PWA), still bump `CACHE_VERSION` in
+  `public/service-worker.js` when you change anything in `public/js|css` or the
+  icons — that's what forces the service worker to re-precache. The fetch
+  handler matches with `ignoreSearch`, so the `?v=` URLs still resolve against
+  the precache offline.

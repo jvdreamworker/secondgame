@@ -6,10 +6,15 @@
   <meta name="theme-color" content="#1B1410">
   <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>Second Game Pool</title>
+  @php
+    // Append the file's mtime so a deploy always busts the browser/HTTP cache —
+    // there is no build step / Vite manifest for these static assets.
+    $rev = fn (string $p) => asset($p) . '?v=' . (is_file(public_path($p)) ? filemtime(public_path($p)) : app()->version());
+  @endphp
   <link rel="manifest" href="{{ asset('manifest.json') }}">
   <link rel="apple-touch-icon" href="{{ asset('icons/pool-192.png') }}">
   <link rel="icon" href="{{ asset('icons/pool-192.png') }}">
-  <link rel="stylesheet" href="{{ asset('css/pool.css') }}">
+  <link rel="stylesheet" href="{{ $rev('css/pool.css') }}">
 </head>
 <body>
   <div id="root"></div>
@@ -23,8 +28,8 @@
     window.POOL_SEASON_ID = @json($seasonId ?? null);
   </script>
 
-  <script src="{{ asset('js/idb.js') }}"></script>
-  <script src="{{ asset('js/api-sync.js') }}"></script>
-  <script src="{{ asset('js/pool-app.js') }}"></script>
+  <script src="{{ $rev('js/idb.js') }}"></script>
+  <script src="{{ $rev('js/api-sync.js') }}"></script>
+  <script src="{{ $rev('js/pool-app.js') }}"></script>
 </body>
 </html>

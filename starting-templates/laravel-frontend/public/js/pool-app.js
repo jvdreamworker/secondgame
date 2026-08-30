@@ -341,8 +341,14 @@ function renderDashboard() {
 }
 
 /* ============================== PAY MODAL ============================== */
+function modalShell(title, body) {
+  return `<div class="modal-header"><h2>${escapeHtml(title)}</h2><button class="icon-btn" data-action="close-modal">&times;</button></div>
+    <div class="modal-body">${body}<button class="btn btn-outline w-full mt-3" data-action="close-modal">Close</button></div>`;
+}
+
 function renderPayModal(playerId, week) {
   const player = state.players.find((p) => p.id === playerId);
+  if (!player) return modalShell("Player not found", `<p class="dim-sm">That player isn't in the roster on this device.</p>`);
   const { weeks, stats } = computeStats(state);
   const existing = getEntry(state, playerId, week);
   const lastWinner = lastWinnerWeekBefore(stats, weeks, week);
@@ -674,28 +680,42 @@ function navBtn(id, label) {
 }
 
 function render() {
-  const view = state.tab === "dashboard" ? renderDashboard()
-    : state.tab === "roster" ? renderRoster()
-    : state.tab === "history" ? renderHistory()
-    : renderSettings();
-  $app().innerHTML = view;
+  // A thrown exception in a screen renderer must never stop us from drawing
+  // the modal — otherwise an open modal shows as an empty sheet with no
+  // buttons and the only way out is the backdrop.
+  const app = $app();
+  if (app) {
+    try {
+      app.innerHTML = state.tab === "dashboard" ? renderDashboard()
+        : state.tab === "roster" ? renderRoster()
+        : state.tab === "history" ? renderHistory()
+        : renderSettings();
+    } catch (err) {
+      console.error("Screen render failed:", err);
+      app.innerHTML = `<div class="px-4 pt-8 text-center">
+        <div class="empty-note">Couldn't draw this screen.
+        <button class="btn btn-outline mt-2" data-action="nav" data-tab="dashboard">Try again</button></div></div>`;
+    }
+  }
 
   const badge = document.querySelector(".sync-badge");
   if (badge) badge.outerHTML = syncBadgeHtml();
 
-  if (state.modal) {
-    $modalRoot().innerHTML = `
-      <div class="modal-backdrop" data-action="backdrop">
-        <div class="modal-sheet" onclick="event.stopPropagation()">
-          ${state.modal.html}
-        </div>
-      </div>`;
-  } else {
-    $modalRoot().innerHTML = "";
+  const modalRoot = $modalRoot();
+  if (modalRoot) {
+    modalRoot.innerHTML = state.modal
+      ? `<div class="modal-backdrop" data-action="backdrop">
+           <div class="modal-sheet" onclick="event.stopPropagation()">${state.modal.html || ""}</div>
+         </div>`
+      : "";
   }
 }
 
 function openModal(html) {
+  if (typeof html !== "string" || html === "") {
+    console.error("openModal: expected modal HTML, got", html);
+    return;
+  }
   state.modal = { html };
   render();
 }

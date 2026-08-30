@@ -6,7 +6,7 @@
  * Bump CACHE_VERSION whenever you deploy changed static assets so clients
  * pick up the new files instead of serving stale ones from cache.
  */
-const CACHE_VERSION = "pool-shell-v4";
+const CACHE_VERSION = "pool-shell-v5";
 const SHELL_FILES = [
   "/pool",
   "/css/pool.css",
@@ -43,8 +43,10 @@ self.addEventListener("fetch", (event) => {
 
   // Cache-first for the app shell; fall back to network, then to the
   // cached shell page itself if totally offline on first visit to a route.
+  // ignoreSearch so cache-busting query strings (?v=<mtime>) still match the
+  // precached shell files.
   event.respondWith(
-    caches.match(request).then((cached) => {
+    caches.match(request, { ignoreSearch: true }).then((cached) => {
       if (cached) return cached;
       return fetch(request)
         .then((res) => {
