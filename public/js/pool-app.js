@@ -349,6 +349,7 @@ function modalShell(title, body) {
 function renderPayModal(playerId, week) {
   const player = state.players.find((p) => p.id === playerId);
   if (!player) return modalShell("Player not found", `<p class="dim-sm">That player isn't in the roster on this device.</p>`);
+  if (!Number.isFinite(week)) week = currentWeek();
   const { weeks, stats } = computeStats(state);
   const existing = getEntry(state, playerId, week);
   const lastWinner = lastWinnerWeekBefore(stats, weeks, week);
@@ -403,7 +404,8 @@ function renderPayModal(playerId, week) {
 
     <div class="btn-row">
       <button class="btn btn-outline flex-1" data-action="close-modal">Cancel</button>
-      <button class="btn btn-green flex-1" data-action="submit-pay" data-player="${playerId}" data-week="${week}" data-start="${startWeek}">Record</button>
+      <button class="btn btn-green flex-1" data-action="submit-pay"
+              data-player="${playerId}" data-week="${week}" data-start="${startWeek}" data-n="${defaultN}">Record</button>
     </div>
   </div>`;
 }
@@ -797,8 +799,9 @@ document.addEventListener("click", async (e) => {
     }
     case "submit-pay": {
       const playerId = el.dataset.player;
-      const startWeek = Number(el.dataset.start);
-      await submitPay(playerId, startWeek);
+      let startWeek = Number(el.dataset.start);
+      if (!Number.isFinite(startWeek)) startWeek = currentWeek();
+      await submitPay(playerId, startWeek, Number(el.dataset.n) || undefined);
       break;
     }
     case "pick-winner":
@@ -928,14 +931,21 @@ function applyNumWeeks(n) {
   }
 }
 
-async function submitPay(playerId, startWeek) {
+async function submitPay(playerId, startWeek, numWeeks) {
   const { weeks } = computeStats(state);
   const startBtn = document.querySelector("[data-action='submit-pay']");
-  const n = Number(startBtn?.dataset.n || 1);
+  const n = Number.isFinite(numWeeks) ? numWeeks : Number(startBtn?.dataset.n || 1);
   const exempt = document.getElementById("pay-exempt")?.checked;
   const note = document.getElementById("pay-note")?.value || "";
   const amount = exempt ? 0 : parseFloat(document.getElementById("pay-amount")?.value || "0");
   const coverWeeks = previewWeeks(startWeek, n, weeks, playerId);
+
+  if (!coverWeeks.length) {
+    console.warn("submitPay: nothing to record", { playerId, startWeek, n, lastWeek: weeks[weeks.length - 1] });
+    const preview = document.getElementById("pay-preview");
+    if (preview) preview.innerHTML = `<span class="green">Nothing to record — those weeks are already on this player's card.</span>`;
+    return;
+  }
 
   for (let i = 0; i < coverWeeks.length; i++) {
     const w = coverWeeks[i];
