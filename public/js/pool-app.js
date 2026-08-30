@@ -13,10 +13,22 @@
 // (Same rules as the spreadsheet / React version — see PoolCalculator on the
 // backend, which must match this exactly. Keep both in sync if you change one.)
 
+const DEFAULT_CONFIG = { seasonLabel: "Thursday Night Mixed — 2nd Game Pool", entryFee: 1, startWeek: 1, totalWeeks: 33 };
+
 function weeksArray(config) {
+  let start = Math.trunc(Number(config && config.startWeek));
+  let total = Math.trunc(Number(config && config.totalWeeks));
+  if (!Number.isFinite(start)) start = DEFAULT_CONFIG.startWeek;
+  if (!Number.isFinite(total) || total < 1) total = DEFAULT_CONFIG.totalWeeks;
   const arr = [];
-  for (let i = 0; i < config.totalWeeks; i++) arr.push(config.startWeek + i);
+  for (let i = 0; i < total; i++) arr.push(start + i);
   return arr;
+}
+
+// A fully-formed, empty week stat — used whenever there's no weekly_results
+// row for a week yet, or the requested week falls outside the season range.
+function blankStat(week) {
+  return { week, count: 0, pot: 0, payout: 0, carry: 0, winnerId: null, score: "", note: "" };
 }
 
 function entryKey(playerId, week) {
@@ -44,11 +56,12 @@ function computeStats(state) {
   for (const w of weeks) {
     const count = entryCount(state, w);
     const pot = prevCarry + count;
-    const r = state.results.get(w);
+    const r = state.results.get(w) || state.results.get(String(w));
     const payout = r && r.winner_player_id ? (r.payout ?? pot) : 0;
     const carry = pot - payout;
     stats[w] = {
-      week: w, count, pot, payout, carry,
+      ...blankStat(w),
+      count, pot, payout, carry,
       winnerId: r?.winner_player_id || null,
       score: r?.score ?? "",
       note: r?.note || "",
@@ -110,7 +123,7 @@ const ROSTER_SEED = [{"name": "Aponte, Juan", "team": "Team 13", "active": false
 
 /* ============================== STATE ============================== */
 const state = {
-  config: { seasonLabel: "Thursday Night Mixed — 2nd Game Pool", entryFee: 1, startWeek: 1, totalWeeks: 33 },
+  config: { ...DEFAULT_CONFIG },
   players: [],              // [{id, name, team, active}]
   entries: new Map(),       // key `${player_id}:${week}` -> {id?, player_id, week, amount, status, note}
   results: new Map(),       // week -> {week, score, winner_player_id, payout, note}
@@ -129,7 +142,17 @@ async function loadState() {
     idb.getAll("entries"),
     idb.getAll("results"),
   ]);
-  if (cfgRow) state.config = { seasonLabel: cfgRow.seasonLabel, entryFee: cfgRow.entryFee, startWeek: cfgRow.startWeek, totalWeeks: cfgRow.totalWeeks };
+  if (cfgRow) {
+    const startWeek = Math.trunc(Number(cfgRow.startWeek));
+    const totalWeeks = Math.trunc(Number(cfgRow.totalWeeks));
+    const entryFee = Number(cfgRow.entryFee);
+    state.config = {
+      seasonLabel: cfgRow.seasonLabel || DEFAULT_CONFIG.seasonLabel,
+      entryFee: Number.isFinite(entryFee) ? entryFee : DEFAULT_CONFIG.entryFee,
+      startWeek: Number.isFinite(startWeek) ? startWeek : DEFAULT_CONFIG.startWeek,
+      totalWeeks: Number.isFinite(totalWeeks) && totalWeeks >= 1 ? totalWeeks : DEFAULT_CONFIG.totalWeeks,
+    };
+  }
   state.players = players || [];
   state.entries = new Map((entries || []).map((e) => [entryKey(e.player_id, e.week), e]));
   state.results = new Map((results || []).map((r) => [r.week, r]));
@@ -138,9 +161,20 @@ async function loadState() {
 
 function pickDefaultWeek() {
   const { weeks, stats } = computeStats(state);
+  if (!weeks.length) return DEFAULT_CONFIG.startWeek;
   let target = weeks[0];
-  for (const w of weeks) if (stats[w].count > 0 || stats[w].winnerId) target = w;
+  for (const w of weeks) if (stats[w] && (stats[w].count > 0 || stats[w].winnerId)) target = w;
   return target;
+}
+
+// state.week must always be a real week in the current season range, or the
+// dashboard/draw lookups get an undefined stat. Snap it back if it drifts.
+function currentWeek() {
+  const weeks = weeksArray(state.config);
+  if (weeks.includes(state.week)) return state.week;
+  const guess = pickDefaultWeek();
+  state.week = weeks.includes(guess) ? guess : (weeks[0] ?? DEFAULT_CONFIG.startWeek);
+  return state.week;
 }
 
 /* ============================== MUTATIONS ============================== */
@@ -242,13 +276,14 @@ function statusPill(status, amount) {
 /* ============================== DASHBOARD ============================== */
 function renderDashboard() {
   const { weeks, stats } = computeStats(state);
-  const stat = stats[state.week];
+  const week = currentWeek();
+  const stat = stats[week] || blankStat(week);
   const query = state._query || "";
   const active = state.players.filter((p) => p.active !== false);
   const filtered = active.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
   const sorted = [...filtered].sort((a, b) => {
-    const ap = getEntry(state, a.id, state.week) ? 1 : 0;
-    const bp = getEntry(state, b.id, state.week) ? 1 : 0;
+    const ap = getEntry(state, a.id, week) ? 1 : 0;
+    const bp = getEntry(state, b.id, week) ? 1 : 0;
     if (ap !== bp) return ap - bp;
     return a.name.localeCompare(b.name);
   });
@@ -257,12 +292,12 @@ function renderDashboard() {
   return `
   <div class="px-4 pt-4 pb-24">
     <div class="week-nav">
-      <button class="icon-btn" data-action="week-prev" ${state.week <= weeks[0] ? "disabled" : ""}>&#8592;</button>
+      <button class="icon-btn" data-action="week-prev" ${week <= weeks[0] ? "disabled" : ""}>&#8592;</button>
       <div class="week-nav-label">
         <div class="label-xs">Week</div>
-        <div class="week-num">${state.week}</div>
+        <div class="week-num">${week}</div>
       </div>
-      <button class="icon-btn" data-action="week-next" ${state.week >= weeks[weeks.length - 1] ? "disabled" : ""}>&#8594;</button>
+      <button class="icon-btn" data-action="week-next" ${week >= weeks[weeks.length - 1] ? "disabled" : ""}>&#8594;</button>
     </div>
 
     <div class="card pot-card">
@@ -280,7 +315,7 @@ function renderDashboard() {
           </div>` : ""}
       </div>
       ${stat.score !== "" ? `<div class="dim-sm mt-2">Score pulled: <b>${escapeHtml(stat.score)}</b></div>` : ""}
-      <button class="btn btn-outline w-full mt-3" data-action="open-draw" data-week="${state.week}">
+      <button class="btn btn-outline w-full mt-3" data-action="open-draw" data-week="${week}">
         ${stat.winnerId ? "Edit score / winner" : "Enter score & winner"}
       </button>
     </div>
@@ -289,9 +324,9 @@ function renderDashboard() {
 
     <div class="list mt-3">
       ${sorted.map((p) => {
-        const e = getEntry(state, p.id, state.week);
+        const e = getEntry(state, p.id, week);
         return `
-        <button class="row-card" data-action="open-pay" data-player="${p.id}" data-week="${state.week}">
+        <button class="row-card" data-action="open-pay" data-player="${p.id}" data-week="${week}">
           <div>
             <div class="row-title">${escapeHtml(p.name)}</div>
             <div class="dim-sm">${escapeHtml(teamLabel(p))}</div>
@@ -380,7 +415,7 @@ function previewWeeks(startWeek, numWeeks, weeks, playerId) {
 /* ============================== DRAW MODAL ============================== */
 function renderDrawModal(week) {
   const { stats } = computeStats(state);
-  const stat = stats[week];
+  const stat = stats[week] || blankStat(week);
   const query = state._drawQuery || "";
   const eligible = state.players.filter((p) => p.name.toLowerCase().includes(query.toLowerCase())).slice(0, 30);
   const selected = state._drawWinnerId || stat.winnerId || "";
@@ -684,8 +719,14 @@ document.addEventListener("click", async (e) => {
       state._importMsg = null;
       render();
       break;
-    case "week-prev": state.week -= 1; render(); break;
-    case "week-next": state.week += 1; render(); break;
+    case "week-prev": case "week-next": {
+      const ws = weeksArray(state.config);
+      const i = ws.indexOf(currentWeek());
+      const next = action === "week-prev" ? i - 1 : i + 1;
+      if (next >= 0 && next < ws.length) state.week = ws[next];
+      render();
+      break;
+    }
     case "open-pay":
       openModal(renderPayModal(el.dataset.player, Number(el.dataset.week)));
       break;
