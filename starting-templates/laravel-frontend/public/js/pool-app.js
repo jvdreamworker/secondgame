@@ -94,6 +94,41 @@ function playerTotal(state, playerId, weeks) {
   return sum;
 }
 
+// Per-player standing for the current week. Mirrors the backend's
+// PoolCalculator::weeksOwed / lastWinnerWeekBefore (there is no per-player
+// stat object — the dashboard is offline and computes this locally).
+//   owed        - list of week numbers still owed, floor..uptoWeek
+//   owesAmount  - owed.length * entry fee
+//   paid        - owed.length === 0
+//   paidThru    - last week in an unbroken run of entries from the floor
+//                 (can be > uptoWeek if they've paid ahead), or null
+//   currentStatus - this week's entry status (paid|covered|exempt|null)
+function playerStanding(state, playerId, weeks, uptoWeek, lastWinnerWeek, entryFee) {
+  const owed = weeksOwed(state, playerId, weeks, uptoWeek, lastWinnerWeek);
+  const floor = lastWinnerWeek || weeks[0] - 1;
+  const lastWeek = weeks[weeks.length - 1];
+  let thru = floor;
+  for (let w = floor + 1; w <= lastWeek; w++) {
+    if (getEntry(state, playerId, w)) thru = w;
+    else break;
+  }
+  return {
+    owed,
+    owesAmount: owed.length * (Number(entryFee) || 1),
+    paid: owed.length === 0,
+    paidThru: thru > floor ? thru : null,
+    currentStatus: getEntry(state, playerId, uptoWeek)?.status || null,
+  };
+}
+
+// Sort key for the "TEAMS" grouping: numeric team number first (blank/non-
+// numeric sink to the end), then the raw string (so "1A" beats "1B").
+function teamSortKey(p) {
+  const s = String(p.team_number ?? "").trim();
+  const n = s === "" ? Infinity : (parseInt(s, 10) || Infinity);
+  return { n, s };
+}
+
 function fmtMoney(n) {
   return `$${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 0 })}`;
 }
@@ -273,20 +308,67 @@ function statusPill(status, amount) {
   return `<span class="pill pill-paid">PAID ${fmtMoney(amount)}</span>`;
 }
 
+// The right-hand tag on a This Week player card, driven by playerStanding().
+function standingPill(st) {
+  if (!st.paid) {
+    // Only show a dollar figure once they're behind more than the current
+    // week — a lone $1 isn't worth the clutter.
+    const amt = st.owed.length > 1 ? ` ${fmtMoney(st.owesAmount)}` : "";
+    return `<span class="pill pill-owe">OWES${amt}</span>`;
+  }
+  if (st.currentStatus === "exempt") return `<span class="pill pill-exempt">EXEMPT</span>`;
+  const thru = st.paidThru ? `<span class="pill-thru">thru Wk ${st.paidThru}</span>` : "";
+  return `<span class="pill-stack"><span class="pill pill-paid">PAID</span>${thru}</span>`;
+}
+
 /* ============================== DASHBOARD ============================== */
 function renderDashboard() {
   const { weeks, stats } = computeStats(state);
   const week = currentWeek();
   const stat = stats[week] || blankStat(week);
   const query = state._query || "";
+  const filterMode = state._dashFilter || "all";   // all | owes | paid
+  const sortMode = state._dashSort || "alpha";      // alpha | teams
+  const lastWinner = lastWinnerWeekBefore(stats, weeks, week);
+  const entryFee = state.config.entryFee;
+
   const active = state.players.filter((p) => p.active !== false);
-  const filtered = active.filter((p) => p.name.toLowerCase().includes(query.toLowerCase()));
-  const sorted = [...filtered].sort((a, b) => {
-    const ap = getEntry(state, a.id, week) ? 1 : 0;
-    const bp = getEntry(state, b.id, week) ? 1 : 0;
-    if (ap !== bp) return ap - bp;
-    return a.name.localeCompare(b.name);
+  const rows = active
+    .filter((p) => p.name.toLowerCase().includes(query.toLowerCase()))
+    .map((p) => ({ p, st: playerStanding(state, p.id, weeks, week, lastWinner, entryFee) }))
+    .filter(({ st }) => filterMode === "owes" ? !st.paid : filterMode === "paid" ? st.paid : true);
+
+  rows.sort((a, b) => {
+    if (sortMode === "teams") {
+      const ka = teamSortKey(a.p), kb = teamSortKey(b.p);
+      if (ka.n !== kb.n) return ka.n - kb.n;
+      if (ka.s !== kb.s) return ka.s.localeCompare(kb.s);
+    }
+    return a.p.name.localeCompare(b.p.name);
   });
+
+  const filterChip = (val, label) =>
+    `<button class="chip ${filterMode === val ? "chip-active" : ""}" data-action="dash-filter" data-filter="${val}">${label}</button>`;
+  const sortChip = (val, label) =>
+    `<button class="chip ${sortMode === val ? "chip-active" : ""}" data-action="dash-sort" data-sort="${val}">${label}</button>`;
+
+  let lastTeam = null;
+  const listBody = rows.map(({ p, st }) => {
+    let header = "";
+    if (sortMode === "teams") {
+      const key = teamLabel(p);
+      if (key !== lastTeam) { header = `<div class="list-group-label">${escapeHtml(key)}</div>`; lastTeam = key; }
+    }
+    return `${header}
+        <button class="row-card" data-action="open-pay" data-player="${p.id}" data-week="${week}">
+          <div>
+            <div class="row-title">${escapeHtml(p.name)}</div>
+            <div class="dim-sm">${escapeHtml(teamLabel(p))}</div>
+          </div>
+          ${standingPill(st)}
+        </button>`;
+  }).join("");
+
   const winner = stat.winnerId ? state.players.find((p) => p.id === stat.winnerId) : null;
 
   return `
@@ -322,20 +404,17 @@ function renderDashboard() {
 
     <input class="input" placeholder="Find a name to record a payment…" value="${escapeHtml(query)}" data-action="search" />
 
-    <div class="list mt-3">
-      ${sorted.map((p) => {
-        const e = getEntry(state, p.id, week);
-        return `
-        <button class="row-card" data-action="open-pay" data-player="${p.id}" data-week="${week}">
-          <div>
-            <div class="row-title">${escapeHtml(p.name)}</div>
-            <div class="dim-sm">${escapeHtml(teamLabel(p))}</div>
-          </div>
-          ${statusPill(e?.status, e?.amount)}
-        </button>`;
-      }).join("") || (active.length === 0
+    <div class="chip-row mt-3">
+      ${filterChip("all", "ALL")}${filterChip("owes", "OWES")}${filterChip("paid", "PAID")}
+    </div>
+    <div class="chip-row">
+      ${sortChip("alpha", "ALPHA")}${sortChip("teams", "TEAMS")}
+    </div>
+
+    <div class="list mt-2">
+      ${listBody || (active.length === 0
         ? `<div class="empty-note">No roster yet — head to the Roster tab to import last season's names or add players.</div>`
-        : `<div class="empty-note">No players match "${escapeHtml(query)}"</div>`)}
+        : `<div class="empty-note">No players match this view.</div>`)}
     </div>
   </div>`;
 }
@@ -703,6 +782,12 @@ function render() {
   const badge = document.querySelector(".sync-badge");
   if (badge) badge.outerHTML = syncBadgeHtml();
 
+  // The bottom nav lives outside #app-view, so keep its active state in sync
+  // with state.tab on every render.
+  document.querySelectorAll(".bottom-nav .nav-btn").forEach((b) => {
+    b.classList.toggle("nav-btn-active", b.dataset.tab === state.tab);
+  });
+
   const modalRoot = $modalRoot();
   if (modalRoot) {
     // No inline onclick here — a strict CSP would drop it. The delegated
@@ -743,6 +828,14 @@ document.addEventListener("click", async (e) => {
       state.openPlayerId = null;
       state._importMsg = null;
       render();
+      break;
+    case "dash-filter":
+      state._dashFilter = el.dataset.filter;
+      renderDashboardListOnly();
+      break;
+    case "dash-sort":
+      state._dashSort = el.dataset.sort;
+      renderDashboardListOnly();
       break;
     case "week-prev": case "week-next": {
       const ws = weeksArray(state.config);
@@ -892,14 +985,17 @@ document.addEventListener("change", async (e) => {
   }
 });
 
-// Re-render just the dashboard list on search keystrokes so the input doesn't lose focus.
+// Re-render just the dashboard view (search keystrokes, filter/sort chips) so
+// we don't disturb the shell or an open modal.
 function renderDashboardListOnly() {
   const container = $app();
   if (!container) return;
+  const searchHadFocus = document.activeElement?.dataset?.action === "search";
   container.innerHTML = renderDashboard();
-  // restore focus + cursor position on the search box
-  const input = container.querySelector('[data-action="search"]');
-  if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+  if (searchHadFocus) {
+    const input = container.querySelector('[data-action="search"]');
+    if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+  }
 }
 
 function refreshDrawList() {
