@@ -15,7 +15,11 @@ class PlayerImportController extends Controller
     /**
      * POST /api/players/import  (multipart: file=<.xlsx>)
      *
-     * Columns read from the sheet: 1 = name, 2 = team_number, 4 = team.
+     * Columns: 1 = name, 2 = team_number. The team NAME is taken from column 3
+     * if it holds text, otherwise column 4 — so both the current 3-column
+     * export (name, team#, team) and the older 4-column one (name, team#, avg,
+     * team) import correctly.
+     *
      * A row is skipped when an exact (name + team_number + team) match
      * already exists — either in this season or earlier in the same file.
      * Everything imported is set active.
@@ -77,7 +81,7 @@ class PlayerImportController extends Controller
             // part of the name, not a delimiter.
             $name = $this->cell($row, 0);
             $teamNumber = $this->cell($row, 1);
-            $team = $this->cell($row, 3);
+            $team = $this->teamName($row);
 
             if ($name === '' || $this->looksLikeHeader($name)) {
                 continue;
@@ -120,6 +124,23 @@ class PlayerImportController extends Controller
     private function cell(array $row, int $index): string
     {
         return trim((string) ($row[$index] ?? ''));
+    }
+
+    /**
+     * Team name: column 3 normally. If column 3 is empty or purely numeric
+     * (an "average" column in the old 4-column layout) and column 4 has a
+     * value, use column 4 instead.
+     */
+    private function teamName(array $row): string
+    {
+        $c = $this->cell($row, 2);
+        $d = $this->cell($row, 3);
+
+        if ($d !== '' && ($c === '' || is_numeric($c))) {
+            return $d;
+        }
+
+        return $c;
     }
 
     private function key(?string $name, ?string $teamNumber, ?string $team): string

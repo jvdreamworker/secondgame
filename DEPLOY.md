@@ -78,7 +78,8 @@ season) but there's no reason to run it every push.
 - Sign in, go to `/password`, set a real password.
 - Open `/pool` and populate the roster from the Roster tab, either:
   - **Import from Excel (.xlsx)** — a spreadsheet with name in column 1,
-    team number in column 2, team name in column 4 (a header row is fine);
+    team number in column 2, team name in column 3 (column 4 also works, for
+    the older export that had an "average" column 3; a header row is fine);
     exact `name + team_number + team` duplicates are skipped, and it reports
     "X imported, Y skipped", or
   - **Import last season's roster** — the ~100 names embedded in the app.

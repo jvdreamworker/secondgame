@@ -47,7 +47,7 @@ with no password (WAMP default).
 | GET | `/api/seasons/{season}/bundle` | full season snapshot for IndexedDB seeding |
 | GET | `/api/seasons/{season}/stats` | server-computed pot/carry (verification aid) |
 | POST | `/api/players` | create (idempotent on client UUID) |
-| POST | `/api/players/import` | multipart `.xlsx` upload — cols 1=name, 2=team_number, 4=team; skips exact (name+team_number+team) dupes; `replace=1` wipes the season roster first; returns `{imported, skipped, replaced, players[]}` |
+| POST | `/api/players/import` | multipart `.xlsx` upload — cols 1=name, 2=team_number, 3=team (falls back to col 4 for the old layout); skips exact (name+team_number+team) dupes; `replace=1` wipes the season roster first; returns `{imported, skipped, replaced, players[]}` |
 | PATCH | `/api/players/{player}` | partial update (name / team_number / team / active) |
 | PUT | `/api/entries` | upsert by `(player_id, week)` |
 | DELETE | `/api/entries/{player}/{week}` | remove (204 even if absent) |

@@ -35,7 +35,7 @@ class PlayerImportTest extends TestCase
 
     public function test_it_imports_players_and_reports_counts(): void
     {
-        // col 1 = name, col 2 = team_number, col 3 = (ignored), col 4 = team
+        // old 4-column layout: name, team_number, avg, team
         $file = $this->xlsx([
             ['Name', 'Team #', 'Avg', 'Team'],            // header, skipped
             ['Bell, Bob', 4, '182', 'Team 4'],
@@ -57,6 +57,27 @@ class PlayerImportTest extends TestCase
             'name' => 'Bell, Bob', 'team_number' => '4', 'team' => 'Team 4', 'active' => true, 'season_id' => $this->season->id,
         ]);
         $this->assertDatabaseHas('players', ['name' => 'Stokes, Joe', 'team_number' => '2', 'team' => 'Team 2']);
+    }
+
+    public function test_it_reads_team_name_from_column_three_in_the_clean_export(): void
+    {
+        // current 3-column layout: name, team_number, team name
+        $file = $this->xlsx([
+            ['Name', 'Team #', 'Team'],       // header, skipped
+            ['Vancleave, Charles', 9, 'Team 9'],
+            ['Rhodes, Candi', 11, 'Team 11'],
+            ['Hamel, John', '', 'Substitute'],
+        ]);
+
+        $this->actingAs($this->operator)
+            ->post('/api/players/import', ['file' => $file], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->assertJson(['imported' => 3, 'skipped' => 0]);
+
+        $this->assertDatabaseHas('players', ['name' => 'Vancleave, Charles', 'team_number' => '9', 'team' => 'Team 9']);
+        $this->assertDatabaseHas('players', ['name' => 'Rhodes, Candi', 'team_number' => '11', 'team' => 'Team 11']);
+        $this->assertDatabaseHas('players', ['name' => 'Hamel, John', 'team' => 'Substitute']);
+        $this->assertDatabaseMissing('players', ['team' => '—']);
     }
 
     public function test_column_one_is_stored_verbatim_as_the_full_name(): void
