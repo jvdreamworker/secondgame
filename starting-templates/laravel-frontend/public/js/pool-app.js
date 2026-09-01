@@ -237,35 +237,42 @@ async function setActive(id, active) {
   render();
 }
 
-async function importPlayersFromFile(file, replace = false) {
+async function importPlayersFromFile(file) {
   if (!file) return;
-  if (replace && state.players.length &&
-      !confirm(`Replace the current roster? This deletes all ${state.players.length} players and their entries, then imports the file.`)) {
-    return;
-  }
-  state._importMsg = { text: replace ? "Replacing roster…" : "Importing…" };
+  state._importMsg = { text: "Importing…" };
   render();
   try {
-    const res = await Sync.uploadPlayerImport(file, replace);
+    const res = await Sync.uploadPlayerImport(file);
+    // The server merges by name + team_number: `players` holds every row it
+    // added, updated, or deactivated — all keep/keyed by their real id.
     const incoming = res.players || [];
-    if (replace) {
-      await idb.clear("players");
-      await idb.putMany("players", incoming);
-      state.players = incoming;
-    } else if (incoming.length) {
+    if (incoming.length) {
       await idb.putMany("players", incoming);
       const byId = new Map(state.players.map((p) => [p.id, p]));
       incoming.forEach((p) => byId.set(p.id, p));
       state.players = [...byId.values()];
     }
-    const summary = replace
-      ? `${res.imported} imported (${res.replaced || 0} cleared), ${res.skipped} skipped`
-      : `${res.imported} imported, ${res.skipped} skipped`;
-    state._importMsg = { ok: true, text: summary };
+    await reconcileOrphanEntries();
+    const bits = [`${res.imported || 0} added`];
+    if (res.updated) bits.push(`${res.updated} updated`);
+    if (res.deactivated) bits.push(`${res.deactivated} deactivated`);
+    if (res.skipped) bits.push(`${res.skipped} skipped`);
+    state._importMsg = { ok: true, text: bits.join(", ") };
   } catch (e) {
     state._importMsg = { ok: false, text: e.message || "Import failed" };
   }
   render();
+}
+
+// Drop any locally-cached entry whose player is no longer in the roster, so
+// stale rows can't keep inflating the pot after a roster change.
+async function reconcileOrphanEntries() {
+  const known = new Set(state.players.map((p) => p.id));
+  const stale = [...state.entries.values()].filter((e) => !known.has(e.player_id));
+  for (const e of stale) {
+    state.entries.delete(entryKey(e.player_id, e.week));
+    await idb.delete("entries", entryKey(e.player_id, e.week));
+  }
 }
 
 async function importRoster() {
@@ -611,10 +618,7 @@ function renderRoster() {
     </div>
     <div class="mb-3">
       ${importBtn}
-      <label class="checkbox-row mt-2">
-        <input type="checkbox" id="import-replace" />
-        <span>Replace current roster (clear all players first)</span>
-      </label>
+      <p class="dim-sm mt-2">Re-importing is safe — players are matched by name &amp; team number, so payments are kept. Anyone not in the file is set inactive.</p>
     </div>
     ${importMsg}
     <input class="input mb-3" placeholder="Search roster…" value="${escapeHtml(query)}" data-action="roster-search" />
@@ -980,8 +984,7 @@ document.addEventListener("change", async (e) => {
   if (el.id === "xlsx-input") {
     const file = el.files && el.files[0];
     el.value = ""; // let the same file be re-picked later
-    const replaceEl = document.getElementById("import-replace");
-    await importPlayersFromFile(file, !!(replaceEl && replaceEl.checked));
+    await importPlayersFromFile(file);
   }
 });
 

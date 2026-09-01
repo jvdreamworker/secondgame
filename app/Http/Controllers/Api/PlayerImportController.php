@@ -15,38 +15,31 @@ class PlayerImportController extends Controller
     /**
      * POST /api/players/import  (multipart: file=<.xlsx>)
      *
-     * Columns: 1 = name, 2 = team_number. The team NAME is taken from column 3
-     * if it holds text, otherwise column 4 — so both the current 3-column
-     * export (name, team#, team) and the older 4-column one (name, team#, avg,
-     * team) import correctly.
+     * Columns: 1 = name, 2 = team_number. The team NAME is column 3 if it
+     * holds text, otherwise column 4 — so both the current 3-column export
+     * (name, team#, team) and the older 4-column one (name, team#, avg, team)
+     * import correctly.
      *
-     * A row is skipped when an exact (name + team_number + team) match
-     * already exists — either in this season or earlier in the same file.
-     * Everything imported is set active.
+     * This is a MERGE, safe to run mid-season:
+     *   - an incoming row is matched to an existing season player by
+     *     (name + team_number), falling back to a unique name match;
+     *   - a match is updated in place (name, team, active = true) — its id
+     *     and all its entries are untouched;
+     *   - a row with no match is inserted as a new player;
+     *   - a season player absent from the file is deactivated (never deleted,
+     *     so payment history survives).
      *
-     * Pass replace=1 to wipe the season's existing roster first (this also
-     * deletes those players' entries and clears them from any weekly result).
-     *
-     * Response: { imported, skipped, replaced, players: [ ...bundle player shape... ] }
+     * Response: { imported, updated, deactivated, skipped, players: [...] }
+     * where `players` is every row that changed, in the bundle player shape.
      */
     public function store(Request $request): JsonResponse
     {
         $request->validate([
             'file' => ['required', 'file', 'max:5120'],
-            'replace' => ['sometimes', 'boolean'],
         ]);
 
         $season = Season::current();
         abort_if($season === null, 409, 'No season configured.');
-
-        $replaced = 0;
-        if ($request->boolean('replace')) {
-            // Delete row-by-row so FKs fire: entries cascade away, and
-            // weekly_results.winner_player_id is nulled.
-            $current = $season->players()->get();
-            $current->each->delete();
-            $replaced = $current->count();
-        }
 
         $path = $request->file('file')->getRealPath();
         $reader = new XlsxReader();
@@ -64,21 +57,21 @@ class PlayerImportController extends Controller
 
         $rows = $sheet->toArray(null, true, false, false);
 
-        // Exact tuples already on record for this season.
-        $existing = $season->players()
-            ->get(['name', 'team_number', 'team'])
-            ->map(fn ($p) => $this->key($p->name, $p->team_number, $p->team))
-            ->flip();
+        $seasonPlayers = $season->players()->get();
+        $byPair = $seasonPlayers->keyBy(fn ($p) => $this->pairKey($p->name, $p->team_number));
+        $byName = $seasonPlayers->groupBy(fn ($p) => $this->nameKey($p->name));
 
         $imported = 0;
+        $updated = 0;
         $skipped = 0;
-        $created = [];
+        $matched = [];   // player id => true, for the "deactivate the rest" pass
+        $touched = [];    // bundle payloads for every row we changed
         $seenInFile = [];
 
         foreach ($rows as $row) {
             // Column 1 is the whole name, stored exactly as it appears in the
-            // sheet ("Last, First"). Never split or reformat it — the comma is
-            // part of the name, not a delimiter.
+            // sheet ("Last, First"). Never split it — the comma is part of the
+            // name, not a delimiter.
             $name = $this->cell($row, 0);
             $teamNumber = $this->cell($row, 1);
             $team = $this->teamName($row);
@@ -87,12 +80,29 @@ class PlayerImportController extends Controller
                 continue;
             }
 
-            $key = $this->key($name, $teamNumber, $team);
-            if ($existing->has($key) || isset($seenInFile[$key])) {
+            $pair = $this->pairKey($name, $teamNumber);
+            if (isset($seenInFile[$pair])) {   // same person twice in one file
                 $skipped++;
                 continue;
             }
-            $seenInFile[$key] = true;
+            $seenInFile[$pair] = true;
+
+            $existing = $byPair->get($pair) ?: $this->uniqueByName($byName, $name, $matched);
+
+            if ($existing) {
+                $existing->fill([
+                    'name' => $name,
+                    'team_number' => $teamNumber !== '' ? $teamNumber : $existing->team_number,
+                    'team' => $team !== '' ? $team : ($existing->team ?: '—'),
+                    'active' => true,
+                ])->save();
+
+                $matched[$existing->id] = true;
+                $touched[] = $this->payload($existing);
+                $updated++;
+
+                continue;
+            }
 
             $player = Player::create([
                 'id' => (string) Str::uuid(),
@@ -103,22 +113,52 @@ class PlayerImportController extends Controller
                 'active' => true,
             ]);
 
-            $created[] = [
-                'id' => $player->id,
-                'name' => $player->name,
-                'team_number' => $player->team_number,
-                'team' => $player->team ?? '—',
-                'active' => true,
-            ];
+            $matched[$player->id] = true;
+            $touched[] = $this->payload($player);
             $imported++;
+        }
+
+        // Anyone on the season roster the file didn't mention: deactivate,
+        // never delete — their entries (and the pot history) stay intact.
+        $deactivated = 0;
+        foreach ($seasonPlayers as $p) {
+            if (! isset($matched[$p->id]) && $p->active) {
+                $p->update(['active' => false]);
+                $touched[] = $this->payload($p);
+                $deactivated++;
+            }
         }
 
         return response()->json([
             'imported' => $imported,
+            'updated' => $updated,
+            'deactivated' => $deactivated,
             'skipped' => $skipped,
-            'replaced' => $replaced,
-            'players' => $created,
+            'players' => $touched,
         ]);
+    }
+
+    /**
+     * A season player whose name matches and that hasn't already been claimed
+     * by another row this import — but only if the name is unambiguous.
+     */
+    private function uniqueByName($byName, string $name, array $matched): ?Player
+    {
+        $candidates = ($byName->get($this->nameKey($name)) ?? collect())
+            ->reject(fn ($p) => isset($matched[$p->id]));
+
+        return $candidates->count() === 1 ? $candidates->first() : null;
+    }
+
+    private function payload(Player $p): array
+    {
+        return [
+            'id' => $p->id,
+            'name' => $p->name,
+            'team_number' => $p->team_number,
+            'team' => $p->team ?? '—',
+            'active' => (bool) $p->active,
+        ];
     }
 
     private function cell(array $row, int $index): string
@@ -143,13 +183,14 @@ class PlayerImportController extends Controller
         return $c;
     }
 
-    private function key(?string $name, ?string $teamNumber, ?string $team): string
+    private function pairKey(?string $name, ?string $teamNumber): string
     {
-        return implode("\0", [
-            trim((string) $name),
-            trim((string) $teamNumber),
-            trim((string) $team),
-        ]);
+        return $this->nameKey($name)."\0".mb_strtolower(trim((string) $teamNumber));
+    }
+
+    private function nameKey(?string $name): string
+    {
+        return mb_strtolower(trim((string) $name));
     }
 
     private function looksLikeHeader(string $name): bool
