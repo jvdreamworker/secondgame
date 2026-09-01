@@ -30,14 +30,54 @@ const WEEK_DATES = {
   34: "Apr 29",
 };
 
+// WEEK_DATES has no year: Sep–Dec are 2026, Jan–Apr are 2027.
+const WEEK_DATE_START_YEAR = 2026;
+const MONTHS = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
+
 function weekDate(week) {
   return WEEK_DATES[week] || "";
+}
+
+// Date object (local midnight) for a week's Thursday, or null if it has no date.
+function weekDateObj(week) {
+  const s = WEEK_DATES[week];
+  if (!s) return null;
+  const [mon, day] = s.split(" ");
+  const m = MONTHS[mon];
+  if (m === undefined) return null;
+  const year = m >= MONTHS.Sep ? WEEK_DATE_START_YEAR : WEEK_DATE_START_YEAR + 1;
+  return new Date(year, m, Number(day));
 }
 
 // "Week 3 · Sep 3" for headings; "Week 3" when there's no date for that week.
 function weekHeading(week) {
   const d = weekDate(week);
   return d ? `Week ${week} · ${d}` : `Week ${week}`;
+}
+
+// The week to show on load, from today's date:
+//  - the week whose Thursday falls in this Sun–Sat window (so it flips on
+//    Sunday, giving the whole weekend to finish recording), else
+//  - the earliest week whose date is still in the future, else
+//  - the last week.
+function computeCurrentWeek(today = new Date()) {
+  const nums = Object.keys(WEEK_DATES).map(Number).sort((a, b) => a - b);
+  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+  const sunday = new Date(t);
+  sunday.setDate(t.getDate() - t.getDay());          // getDay: 0 = Sunday
+  const saturday = new Date(sunday);
+  saturday.setDate(sunday.getDate() + 6);
+
+  for (const w of nums) {
+    const d = weekDateObj(w);
+    if (d && d >= sunday && d <= saturday) return w;
+  }
+  for (const w of nums) {
+    const d = weekDateObj(w);
+    if (d && d >= t) return w;
+  }
+  return nums[nums.length - 1];
 }
 
 function weeksArray(config) {
@@ -220,11 +260,12 @@ async function loadState() {
 }
 
 function pickDefaultWeek() {
-  const { weeks, stats } = computeStats(state);
+  const weeks = weeksArray(state.config);
   if (!weeks.length) return DEFAULT_CONFIG.startWeek;
-  let target = weeks[0];
-  for (const w of weeks) if (stats[w] && (stats[w].count > 0 || stats[w].winnerId)) target = w;
-  return target;
+  const w = computeCurrentWeek();
+  if (w <= weeks[0]) return weeks[0];
+  if (w >= weeks[weeks.length - 1]) return weeks[weeks.length - 1];
+  return weeks.includes(w) ? w : weeks[0];
 }
 
 // state.week must always be a real week in the current season range, or the
@@ -685,15 +726,47 @@ function renderRoster() {
   }
 
   const rosterFilter = state._rosterFilter || "all";   // all | active | inactive
+  const rosterSort = state._rosterSort || "alpha";     // alpha | teams
   const activeCount = state.players.filter((p) => p.active !== false).length;
   const counts = { all: state.players.length, active: activeCount, inactive: state.players.length - activeCount };
   const rFilterChip = (val, label) =>
     `<button class="chip ${rosterFilter === val ? "chip-active" : ""}" data-action="roster-filter" data-filter="${val}">${label} <span class="chip-count">${counts[val]}</span></button>`;
+  const rSortChip = (val, label) =>
+    `<button class="chip ${rosterSort === val ? "chip-active" : ""}" data-action="roster-sort" data-sort="${val}">${label}</button>`;
 
   const filtered = state.players
     .filter((p) => p.name.toLowerCase().includes(query.toLowerCase()))
-    .filter((p) => rosterFilter === "active" ? p.active !== false : rosterFilter === "inactive" ? p.active === false : true)
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .filter((p) => rosterFilter === "active" ? p.active !== false : rosterFilter === "inactive" ? p.active === false : true);
+
+  filtered.sort((a, b) => {
+    if (rosterSort === "teams") {
+      const ka = teamSortKey(a), kb = teamSortKey(b);
+      if (ka.n !== kb.n) return ka.n - kb.n;
+      if (ka.s !== kb.s) return ka.s.localeCompare(kb.s);
+    }
+    return a.name.localeCompare(b.name);
+  });
+
+  let lastTeam = null;
+  const listBody = filtered.map((p) => {
+    let header = "";
+    if (rosterSort === "teams") {
+      const key = teamLabel(p);
+      if (key !== lastTeam) { header = `<div class="list-group-label">${escapeHtml(key)}</div>`; lastTeam = key; }
+    }
+    return `${header}
+        <div class="row-card row-card-static ${p.active === false ? "row-dim" : ""}">
+          <button class="row-title-btn" data-action="open-player" data-id="${p.id}">
+            <div class="row-title">${escapeHtml(p.name)}</div>
+            <div class="dim-sm">${escapeHtml(teamLabel(p))}</div>
+          </button>
+          <button class="icon-btn icon-btn-sm" data-action="open-edit-player" data-id="${p.id}" title="Edit player">&#9998;</button>
+          <label class="switch" title="${p.active === false ? "Inactive" : "Active"}">
+            <input type="checkbox" data-action="toggle-active" data-id="${p.id}" ${p.active === false ? "" : "checked"} />
+            <span class="switch-slider"></span>
+          </label>
+        </div>`;
+  }).join("");
 
   return `
   <div class="px-4 pt-4 pb-24">
@@ -706,23 +779,17 @@ function renderRoster() {
       <p class="dim-sm mt-2">Re-importing is safe — players are matched by name &amp; team number, so payments are kept. Anyone not in the file is set inactive.</p>
     </div>
     ${importMsg}
-    <div class="chip-row mt-1">
-      ${rFilterChip("all", "ALL")}${rFilterChip("active", "ACTIVE")}${rFilterChip("inactive", "INACTIVE")}
+    <div class="controls-row mt-1">
+      <div class="chip-row">
+        ${rFilterChip("all", "ALL")}${rFilterChip("active", "ACTIVE")}${rFilterChip("inactive", "INACTIVE")}
+      </div>
+      <div class="chip-row">
+        ${rSortChip("alpha", "ALPHA")}${rSortChip("teams", "TEAMS")}
+      </div>
     </div>
     <input class="input mb-3" placeholder="Search roster…" value="${escapeHtml(query)}" data-action="roster-search" />
     <div class="list">
-      ${filtered.map((p) => `
-        <div class="row-card row-card-static ${p.active === false ? "row-dim" : ""}">
-          <button class="row-title-btn" data-action="open-player" data-id="${p.id}">
-            <div class="row-title">${escapeHtml(p.name)}</div>
-            <div class="dim-sm">${escapeHtml(teamLabel(p))}</div>
-          </button>
-          <button class="icon-btn icon-btn-sm" data-action="open-edit-player" data-id="${p.id}" title="Edit player">&#9998;</button>
-          <label class="switch" title="${p.active === false ? "Inactive" : "Active"}">
-            <input type="checkbox" data-action="toggle-active" data-id="${p.id}" ${p.active === false ? "" : "checked"} />
-            <span class="switch-slider"></span>
-          </label>
-        </div>`).join("") || `<div class="empty-note">No players match this view.</div>`}
+      ${listBody || `<div class="empty-note">No players match this view.</div>`}
     </div>
   </div>`;
 }
@@ -953,6 +1020,10 @@ document.addEventListener("click", async (e) => {
       break;
     case "roster-filter":
       state._rosterFilter = el.dataset.filter;
+      render();
+      break;
+    case "roster-sort":
+      state._rosterSort = el.dataset.sort;
       render();
       break;
     case "open-edit-player":
