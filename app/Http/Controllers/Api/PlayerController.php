@@ -62,6 +62,33 @@ class PlayerController extends Controller
         return response()->json($this->payload($player));
     }
 
+    /**
+     * PATCH /api/players/team/{teamNumber}/name  { team: "New Name" }
+     *
+     * Bulk-set the team NAME on every player in the current season that has
+     * this team number. Used by the roster edit modal's "update the whole
+     * team too?" prompt.
+     */
+    public function renameTeam(Request $request, string $teamNumber): JsonResponse
+    {
+        $data = $request->validate([
+            'team' => ['required', 'string', 'max:255'],
+        ]);
+
+        $season = Season::current();
+        abort_if($season === null, 409, 'No season configured.');
+
+        $players = $season->players()->where('team_number', $teamNumber)->get();
+        foreach ($players as $player) {
+            $player->update(['team' => $data['team']]);
+        }
+
+        return response()->json([
+            'updated' => $players->count(),
+            'players' => $players->map(fn (Player $p) => $this->payload($p))->all(),
+        ]);
+    }
+
     private function payload(Player $player): array
     {
         return [

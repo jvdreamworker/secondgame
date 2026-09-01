@@ -15,6 +15,31 @@
 
 const DEFAULT_CONFIG = { seasonLabel: "Thursday Night Mixed — 2nd Game Pool", entryFee: 1, startWeek: 1, totalWeeks: 33 };
 
+// League bowls Thursdays. Week 3 = Sep 3, 2026, every Thursday after, skipping
+// Nov 26 (Thanksgiving), Dec 24 (Christmas Eve), Dec 31 (New Year's Eve).
+// Weeks outside 3–34 have no date — callers fall back to just "Week N".
+const WEEK_DATES = {
+  3: "Sep 3", 4: "Sep 10", 5: "Sep 17", 6: "Sep 24",
+  7: "Oct 1", 8: "Oct 8", 9: "Oct 15", 10: "Oct 22",
+  11: "Oct 29", 12: "Nov 5", 13: "Nov 12", 14: "Nov 19",
+  15: "Dec 3", 16: "Dec 10", 17: "Dec 17",
+  18: "Jan 7", 19: "Jan 14", 20: "Jan 21", 21: "Jan 28",
+  22: "Feb 4", 23: "Feb 11", 24: "Feb 18", 25: "Feb 25",
+  26: "Mar 4", 27: "Mar 11", 28: "Mar 18", 29: "Mar 25",
+  30: "Apr 1", 31: "Apr 8", 32: "Apr 15", 33: "Apr 22",
+  34: "Apr 29",
+};
+
+function weekDate(week) {
+  return WEEK_DATES[week] || "";
+}
+
+// "Week 3 · Sep 3" for headings; "Week 3" when there's no date for that week.
+function weekHeading(week) {
+  const d = weekDate(week);
+  return d ? `Week ${week} · ${d}` : `Week ${week}`;
+}
+
 function weeksArray(config) {
   let start = Math.trunc(Number(config && config.startWeek));
   let total = Math.trunc(Number(config && config.totalWeeks));
@@ -237,6 +262,51 @@ async function setActive(id, active) {
   render();
 }
 
+async function updatePlayer(id, patch) {
+  const p = state.players.find((x) => x.id === id);
+  if (!p) return;
+  Object.assign(p, patch);
+  await idb.put("players", p);
+  Sync.enqueue({ type: "player.update", payload: { id, ...patch } });
+}
+
+// Set the team NAME on every player who shares this team number.
+async function renameTeam(teamNumber, team) {
+  const tn = String(teamNumber);
+  for (const p of state.players) {
+    if (String(p.team_number ?? "") === tn) {
+      p.team = team;
+      await idb.put("players", p);
+    }
+  }
+  Sync.enqueue({ type: "team.rename", payload: { team_number: teamNumber, team } });
+}
+
+async function saveEditPlayer(id, { name, teamNumber, team }) {
+  const p = state.players.find((x) => x.id === id);
+  if (!p) return;
+  const tn = String(teamNumber ?? "").trim();
+  const prevTeamName = p.team && p.team !== "—" ? p.team : "";
+  const teamNameChanged = team.trim() !== prevTeamName;
+  const others = tn
+    ? state.players.filter((x) => x.id !== id && String(x.team_number ?? "").trim() === tn)
+    : [];
+
+  await updatePlayer(id, {
+    name: name.trim() || p.name,
+    team_number: tn || null,
+    team: team.trim() || "—",
+  });
+
+  if (teamNameChanged && team.trim() && others.length &&
+      confirm(`${others.length} other player${others.length === 1 ? " is" : "s are"} on Team #${tn}. Update their team name to "${team.trim()}" too?`)) {
+    await renameTeam(tn, team.trim());
+  }
+
+  closeModal();
+  render();
+}
+
 async function importPlayersFromFile(file) {
   if (!file) return;
   state._importMsg = { text: "Importing…" };
@@ -340,9 +410,12 @@ function renderDashboard() {
   const entryFee = state.config.entryFee;
 
   const active = state.players.filter((p) => p.active !== false);
-  const rows = active
-    .filter((p) => p.name.toLowerCase().includes(query.toLowerCase()))
-    .map((p) => ({ p, st: playerStanding(state, p.id, weeks, week, lastWinner, entryFee) }))
+  const standings = active.map((p) => ({ p, st: playerStanding(state, p.id, weeks, week, lastWinner, entryFee) }));
+  const oweCount = standings.filter(({ st }) => !st.paid).length;
+  const paidCount = standings.length - oweCount;
+
+  const rows = standings
+    .filter(({ p }) => p.name.toLowerCase().includes(query.toLowerCase()))
     .filter(({ st }) => filterMode === "owes" ? !st.paid : filterMode === "paid" ? st.paid : true);
 
   rows.sort((a, b) => {
@@ -354,8 +427,8 @@ function renderDashboard() {
     return a.p.name.localeCompare(b.p.name);
   });
 
-  const filterChip = (val, label) =>
-    `<button class="chip ${filterMode === val ? "chip-active" : ""}" data-action="dash-filter" data-filter="${val}">${label}</button>`;
+  const filterChip = (val, label, count) =>
+    `<button class="chip ${filterMode === val ? "chip-active" : ""}" data-action="dash-filter" data-filter="${val}">${label} <span class="chip-count">${count}</span></button>`;
   const sortChip = (val, label) =>
     `<button class="chip ${sortMode === val ? "chip-active" : ""}" data-action="dash-sort" data-sort="${val}">${label}</button>`;
 
@@ -385,6 +458,7 @@ function renderDashboard() {
       <div class="week-nav-label">
         <div class="label-xs">Week</div>
         <div class="week-num">${week}</div>
+        ${weekDate(week) ? `<div class="dim-sm">${weekDate(week)}</div>` : ""}
       </div>
       <button class="icon-btn" data-action="week-next" ${week >= weeks[weeks.length - 1] ? "disabled" : ""}>&#8594;</button>
     </div>
@@ -409,14 +483,15 @@ function renderDashboard() {
       </button>
     </div>
 
-    <input class="input" placeholder="Find a name to record a payment…" value="${escapeHtml(query)}" data-action="search" />
-
-    <div class="chip-row mt-3">
-      ${filterChip("all", "ALL")}${filterChip("owes", "OWES")}${filterChip("paid", "PAID")}
+    <div class="controls-row mt-3">
+      <div class="chip-row">
+        ${filterChip("all", "ALL", standings.length)}${filterChip("owes", "OWES", oweCount)}${filterChip("paid", "PAID", paidCount)}
+      </div>
+      <div class="chip-row">
+        ${sortChip("alpha", "ALPHA")}${sortChip("teams", "TEAMS")}
+      </div>
     </div>
-    <div class="chip-row">
-      ${sortChip("alpha", "ALPHA")}${sortChip("teams", "TEAMS")}
-    </div>
+    <input class="input mt-2" placeholder="Find a name…" value="${escapeHtml(query)}" data-action="search" />
 
     <div class="list mt-2">
       ${listBody || (active.length === 0
@@ -448,7 +523,7 @@ function renderPayModal(playerId, week) {
     return `
     <div class="modal-header"><h2>${escapeHtml(player.name)}</h2><button class="icon-btn" data-action="close-modal">&times;</button></div>
     <div class="modal-body text-center">
-      <div class="dim-sm">Week ${week} — already recorded</div>
+      <div class="dim-sm">${weekHeading(week)} — already recorded</div>
       <div class="big-amount mt-1 mb-3">${existing.status === "covered" ? "Covered (P)" : existing.status === "exempt" ? "Exempt" : fmtMoney(existing.amount)}</div>
       <p class="dim-sm mb-4">To fix a mistake, use the player's week grid on their detail page — it lets you edit any single week directly.</p>
       <button class="btn btn-outline w-full" data-action="close-modal">Close</button>
@@ -461,7 +536,7 @@ function renderPayModal(playerId, week) {
   return `
   <div class="modal-header"><h2>${escapeHtml(player.name)}</h2><button class="icon-btn" data-action="close-modal">&times;</button></div>
   <div class="modal-body">
-    <div class="dim-sm mb-3">${escapeHtml(teamLabel(player))} · Week ${week}</div>
+    <div class="dim-sm mb-3">${escapeHtml(teamLabel(player))} · ${weekHeading(week)}</div>
     ${isCatchUp ? `
       <div class="alert-box">
         No entries on record for ${escapeHtml(player.name)}.
@@ -515,7 +590,7 @@ function renderDrawModal(week) {
   const selected = state._drawWinnerId || stat.winnerId || "";
 
   return `
-  <div class="modal-header"><h2>Week ${week} — Draw &amp; Winner</h2><button class="icon-btn" data-action="close-modal">&times;</button></div>
+  <div class="modal-header"><h2>${weekHeading(week)} — Draw &amp; Winner</h2><button class="icon-btn" data-action="close-modal">&times;</button></div>
   <div class="modal-body">
     <div class="card center mb-4">
       <div class="label-xs">Pot this week</div>
@@ -566,7 +641,7 @@ function renderAddPlayerModal() {
 function renderCellModal(playerId, week) {
   const e = getEntry(state, playerId, week);
   return `
-  <div class="modal-header"><h2>Week ${week}</h2><button class="icon-btn" data-action="close-modal">&times;</button></div>
+  <div class="modal-header"><h2>${weekHeading(week)}</h2><button class="icon-btn" data-action="close-modal">&times;</button></div>
   <div class="modal-body">
     <div class="btn-row mb-3">
       <button class="btn ${e?.status === "covered" ? "btn-green" : "btn-outline"} flex-1" data-action="cell-set" data-player="${playerId}" data-week="${week}" data-status="covered">Mark P (covered)</button>
@@ -609,7 +684,17 @@ function renderRoster() {
     </div>`;
   }
 
-  const filtered = state.players.filter((p) => p.name.toLowerCase().includes(query.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name));
+  const rosterFilter = state._rosterFilter || "all";   // all | active | inactive
+  const activeCount = state.players.filter((p) => p.active !== false).length;
+  const counts = { all: state.players.length, active: activeCount, inactive: state.players.length - activeCount };
+  const rFilterChip = (val, label) =>
+    `<button class="chip ${rosterFilter === val ? "chip-active" : ""}" data-action="roster-filter" data-filter="${val}">${label} <span class="chip-count">${counts[val]}</span></button>`;
+
+  const filtered = state.players
+    .filter((p) => p.name.toLowerCase().includes(query.toLowerCase()))
+    .filter((p) => rosterFilter === "active" ? p.active !== false : rosterFilter === "inactive" ? p.active === false : true)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
   return `
   <div class="px-4 pt-4 pb-24">
     <div class="row-between mb-3">
@@ -621,6 +706,9 @@ function renderRoster() {
       <p class="dim-sm mt-2">Re-importing is safe — players are matched by name &amp; team number, so payments are kept. Anyone not in the file is set inactive.</p>
     </div>
     ${importMsg}
+    <div class="chip-row mt-1">
+      ${rFilterChip("all", "ALL")}${rFilterChip("active", "ACTIVE")}${rFilterChip("inactive", "INACTIVE")}
+    </div>
     <input class="input mb-3" placeholder="Search roster…" value="${escapeHtml(query)}" data-action="roster-search" />
     <div class="list">
       ${filtered.map((p) => `
@@ -629,11 +717,33 @@ function renderRoster() {
             <div class="row-title">${escapeHtml(p.name)}</div>
             <div class="dim-sm">${escapeHtml(teamLabel(p))}</div>
           </button>
+          <button class="icon-btn icon-btn-sm" data-action="open-edit-player" data-id="${p.id}" title="Edit player">&#9998;</button>
           <label class="switch" title="${p.active === false ? "Inactive" : "Active"}">
             <input type="checkbox" data-action="toggle-active" data-id="${p.id}" ${p.active === false ? "" : "checked"} />
             <span class="switch-slider"></span>
           </label>
-        </div>`).join("")}
+        </div>`).join("") || `<div class="empty-note">No players match this view.</div>`}
+    </div>
+  </div>`;
+}
+
+/* ============================== EDIT PLAYER MODAL ============================== */
+function renderEditPlayerModal(playerId) {
+  const p = state.players.find((x) => x.id === playerId);
+  if (!p) return modalShell("Player not found", `<p class="dim-sm">That player isn't on the roster on this device.</p>`);
+  const teamVal = p.team && p.team !== "—" ? p.team : "";
+  return `
+  <div class="modal-header"><h2>Edit player</h2><button class="icon-btn" data-action="close-modal">&times;</button></div>
+  <div class="modal-body">
+    <label class="label-xs">Name (Last, First)</label>
+    <input class="input" id="edit-player-name" value="${escapeHtml(p.name)}" />
+    <label class="label-xs">Team number</label>
+    <input class="input" id="edit-player-team-number" inputmode="numeric" value="${escapeHtml(p.team_number ?? "")}" />
+    <label class="label-xs">Team name</label>
+    <input class="input" id="edit-player-team" value="${escapeHtml(teamVal)}" />
+    <div class="btn-row mt-3">
+      <button class="btn btn-outline flex-1" data-action="close-modal">Cancel</button>
+      <button class="btn btn-green flex-1" data-action="submit-edit-player" data-id="${p.id}">Save</button>
     </div>
   </div>`;
 }
@@ -685,7 +795,7 @@ function renderHistoryWeeks(weeks, stats) {
       return `
       <button class="row-card" data-action="goto-week" data-week="${w}">
         <div>
-          <div class="row-title">Week ${w}</div>
+          <div class="row-title">${weekHeading(w)}</div>
           <div class="dim-sm">${s.count} entries ${s.score !== "" ? `· score ${escapeHtml(s.score)}` : ""} ${winner ? `· ${escapeHtml(winner.name)} won` : ""}</div>
         </div>
         <div class="text-right">
@@ -840,6 +950,20 @@ document.addEventListener("click", async (e) => {
     case "dash-sort":
       state._dashSort = el.dataset.sort;
       renderDashboardListOnly();
+      break;
+    case "roster-filter":
+      state._rosterFilter = el.dataset.filter;
+      render();
+      break;
+    case "open-edit-player":
+      openModal(renderEditPlayerModal(el.dataset.id));
+      break;
+    case "submit-edit-player":
+      await saveEditPlayer(el.dataset.id, {
+        name: document.getElementById("edit-player-name").value,
+        teamNumber: document.getElementById("edit-player-team-number").value,
+        team: document.getElementById("edit-player-team").value,
+      });
       break;
     case "week-prev": case "week-next": {
       const ws = weeksArray(state.config);

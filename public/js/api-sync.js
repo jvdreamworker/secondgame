@@ -26,6 +26,7 @@ const ROUTES = {
   players: () => `/api/players`,
   playerImport: () => `/api/players/import`,
   player: (id) => `/api/players/${id}`,
+  teamRename: (teamNumber) => `/api/players/team/${encodeURIComponent(teamNumber)}/name`,
   entryUpsert: () => `/api/entries`,
   entryDelete: (playerId, week) => `/api/entries/${playerId}/${week}`,
   result: (week) => `/api/weekly-results/${week}`,
@@ -58,6 +59,8 @@ async function sendJob(job) {
       return apiFetch(ROUTES.players(), { method: "POST", body: JSON.stringify(job.payload) });
     case "player.update":
       return apiFetch(ROUTES.player(job.payload.id), { method: "PATCH", body: JSON.stringify(job.payload) });
+    case "team.rename":
+      return apiFetch(ROUTES.teamRename(job.payload.team_number), { method: "PATCH", body: JSON.stringify({ team: job.payload.team }) });
     case "entry.upsert":
       return apiFetch(ROUTES.entryUpsert(), { method: "PUT", body: JSON.stringify(job.payload) });
     case "entry.delete":

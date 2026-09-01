@@ -65,6 +65,7 @@ button, input { font-family: inherit; }
   width: 36px; height: 36px; border-radius: 999px; font-size: 16px; cursor: pointer;
 }
 .icon-btn:disabled { opacity: .3; }
+.icon-btn-sm { width: 32px; height: 32px; font-size: 14px; flex-shrink: 0; }
 
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 18px; margin-bottom: 16px; }
 .card.center { text-align: center; }
@@ -86,7 +87,7 @@ button, input { font-family: inherit; }
   padding: 14px 16px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border);
   color: inherit; text-align: left; cursor: pointer;
 }
-.row-card-static { cursor: default; }
+.row-card-static { cursor: default; gap: 8px; }
 .row-dim { opacity: .5; }
 .row-title { font-weight: 700; color: var(--cream); }
 .row-title-btn { background: none; border: none; text-align: left; color: inherit; cursor: pointer; padding: 0; flex: 1; }
@@ -128,10 +129,17 @@ button, input { font-family: inherit; }
   background: var(--surface2); color: var(--cream); border: 1px solid var(--border); cursor: pointer;
 }
 .chip-active { background: var(--brass); color: #241B0D; }
+.chip-count { opacity: .6; font-weight: 800; }
+.chip-active .chip-count { opacity: .75; }
 .chip-input {
   width: 56px; padding: 8px; border-radius: 10px; text-align: center;
   background: var(--surface2); color: var(--cream); border: 1px solid var(--border);
 }
+
+/* This Week: filters left, sort right, on one line (wraps on narrow screens) */
+.controls-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.controls-row .chip-row { margin-bottom: 0; }
+.controls-row .chip { padding: 7px 10px; font-size: 12px; }
 
 .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--cream-dim); margin: 12px 0; }
 

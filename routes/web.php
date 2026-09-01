@@ -35,6 +35,7 @@ Route::middleware('auth')->group(function () {
 
         Route::post('players', [PlayerController::class, 'store']);
         Route::post('players/import', [PlayerImportController::class, 'store']);
+        Route::patch('players/team/{teamNumber}/name', [PlayerController::class, 'renameTeam']);
         Route::patch('players/{player}', [PlayerController::class, 'update']);
 
         Route::put('entries', [EntryController::class, 'upsert']);
