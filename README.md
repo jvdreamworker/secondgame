@@ -69,6 +69,22 @@ If you change the rule in one place, change it in both and keep that test green.
 - winner ⇒ `payout = recorded payout`, `carry = pot - payout`.
 - no winner ⇒ `carry = pot` (rolls forward).
 
+## Frontend notes
+
+- No build step. `resources/views/pool/index.blade.php` appends `?v=<filemtime>`
+  to the CSS/JS URLs, so a `git pull` on deploy busts the browser cache. When
+  you change anything under `public/js/` or `public/css/`, **also bump
+  `CACHE_VERSION` in `public/service-worker.js`** (offline clients keep the old
+  precache otherwise) and mirror the changed files into
+  `starting-templates/laravel-frontend/public/`.
+- `WEEK_DATES` in `pool-app.js` maps weeks 3–34 to their Thursday dates
+  (2026-27 season). The dashboard opens on the week whose Thursday falls in the
+  current Sun–Sat window (so it advances on Sunday, giving the weekend to
+  record results), falling back to the next upcoming week, then week 34.
+- The 2026-27 season runs weeks **3–34** (`start_week = 3`, `total_weeks = 32`).
+  Set this on the Settings screen or via `Season::current()->update([...])`;
+  the seeder default is still `1` / `33`.
+
 ## Roster maintenance commands
 
 ```

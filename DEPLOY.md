@@ -76,12 +76,15 @@ season) but there's no reason to run it every push.
 
 - Visit `https://bowl.thecommish.app/` → redirects to `/login`.
 - Sign in, go to `/password`, set a real password.
+- On the **Settings** screen set the season to weeks **3–34** (starting week 3,
+  total weeks 32) so the week dates line up. The seeded default is 1 / 33.
 - Open `/pool` and populate the roster from the Roster tab, either:
-  - **Import from Excel (.xlsx)** — a spreadsheet with name in column 1,
-    team number in column 2, team name in column 3 (column 4 also works, for
-    the older export that had an "average" column 3; a header row is fine);
-    exact `name + team_number + team` duplicates are skipped, and it reports
-    "X imported, Y skipped", or
+  - **Import from Excel (.xlsx)** — name in column 1, team number in column 2,
+    team name in column 3 (column 4 also works, for the older export with an
+    "average" column 3; a header row is fine). It **merges** by name + team
+    number: matched players are updated in place (id + payments kept), new rows
+    inserted, anyone missing from the file set inactive. Re-running it is safe.
+    Reports "X added, Y updated, Z deactivated, W skipped".
   - **Import last season's roster** — the ~100 names embedded in the app.
 - "Add to Home Screen" to install the PWA. Do this while signed in so the
   service worker caches an authenticated shell.
