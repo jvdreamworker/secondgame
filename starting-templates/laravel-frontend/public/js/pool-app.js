@@ -172,11 +172,47 @@ function nextUnpaidWeek(state, playerId, weeks, lastWinnerWeek) {
   return null;
 }
 
-// Local YYYY-MM-DD for today (not toISOString, which is UTC and can roll a day).
-function todayISO() {
-  const d = new Date();
+// Local YYYY-MM-DD (not toISOString, which is UTC and can roll a day).
+function isoDate(d) {
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+function todayISO() {
+  return isoDate(new Date());
+}
+
+// Cash recorded as received during the Sun–Sat window that contains `week`'s
+// bowling night. `received_on` is the operator's hand-entered date the money
+// arrived — independent of which weeks an entry is applied to — so a lump sum
+// counts once, on the day it was handed over.
+function collectedInWeek(state, week) {
+  const d = weekDateObj(week);
+  if (!d) return 0;
+  const sunday = new Date(d);
+  sunday.setDate(d.getDate() - d.getDay());
+  const saturday = new Date(sunday);
+  saturday.setDate(sunday.getDate() + 6);
+  const lo = isoDate(sunday), hi = isoDate(saturday);
+  let sum = 0;
+  for (const e of state.entries.values()) {
+    if (e.received_on && e.received_on >= lo && e.received_on <= hi && typeof e.amount === "number") {
+      sum += e.amount;
+    }
+  }
+  return sum;
+}
+
+// Literal cash the operator should be holding right now: every dollar recorded
+// as collected, season-to-date, minus every dollar paid out to winners.
+function totalInHand(state) {
+  const { weeks, stats } = computeStats(state);
+  let collected = 0;
+  for (const e of state.entries.values()) {
+    if (e.status === "paid" && typeof e.amount === "number") collected += e.amount;
+  }
+  let paidOut = 0;
+  for (const w of weeks) paidOut += stats[w].payout || 0;
+  return collected - paidOut;
 }
 
 // Per-player standing for the current week. Mirrors the backend's
@@ -519,6 +555,19 @@ function renderDashboard() {
 
   const winner = stat.winnerId ? state.players.find((p) => p.id === stat.winnerId) : null;
 
+  // Expandable pot breakdown — collapsed by default on every load (privacy:
+  // players may be looking over the operator's shoulder). Session-only, never
+  // persisted, so it resets on reload.
+  const potExpanded = !!state._potExpanded;
+  const rollover = stat.pot - stat.count;
+  const potBreakdown = potExpanded ? `
+      <div class="pot-breakdown">
+        <div class="pot-line"><span>Rollover from last week</span><b>${fmtMoney(rollover)}</b></div>
+        <div class="pot-line"><span>Collected this week</span><b>${fmtMoney(collectedInWeek(state, week))}</b></div>
+        <div class="pot-line pot-line-strong"><span>Total in hand</span><b>${fmtMoney(totalInHand(state))}</b></div>
+        <div class="pot-line"><span>Owes this week</span><b>${fmtMoney(standings.reduce((s, { st }) => s + st.owesAmount, 0))}</b></div>
+      </div>` : "";
+
   return `
   <div class="px-4 pt-4 pb-24">
     <div class="week-nav">
@@ -534,9 +583,12 @@ function renderDashboard() {
     <div class="card pot-card">
       <div class="pot-card-top">
         <div>
-          <div class="label-xs">This week's pot</div>
+          <button class="pot-toggle" data-action="toggle-pot" aria-expanded="${potExpanded}">
+            <span class="label-xs">This week's pot</span>
+            <span class="pot-chevron">${potExpanded ? "&#9652;" : "&#9662;"}</span>
+          </button>
           <div class="pot-amount">${fmtMoney(stat.pot)}</div>
-          <div class="dim-sm">${stat.count} paid this week${stat.pot - stat.count > 0 ? ` · ${fmtMoney(stat.pot - stat.count)} carried over` : ""}</div>
+          ${potExpanded ? `<div class="dim-sm">${stat.count} paid this week</div>` : ""}
         </div>
         ${winner ? `
           <div class="winner-box">
@@ -545,6 +597,7 @@ function renderDashboard() {
             <div class="dim-sm">${fmtMoney(stat.payout)}</div>
           </div>` : ""}
       </div>
+      ${potBreakdown}
       ${stat.score !== "" ? `<div class="dim-sm mt-2">Score pulled: <b>${escapeHtml(stat.score)}</b></div>` : ""}
       <button class="btn btn-outline w-full mt-3" data-action="open-draw" data-week="${week}">
         ${stat.winnerId ? "Edit score / winner" : "Enter score & winner"}
@@ -1065,6 +1118,10 @@ document.addEventListener("click", async (e) => {
       break;
     case "dash-sort":
       state._dashSort = el.dataset.sort;
+      renderDashboardListOnly();
+      break;
+    case "toggle-pot":
+      state._potExpanded = !state._potExpanded;
       renderDashboardListOnly();
       break;
     case "roster-filter":

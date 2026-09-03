@@ -73,6 +73,19 @@ button, input { font-family: inherit; }
 .pot-amount { font-size: 42px; font-weight: 900; color: var(--brass); line-height: 1; font-variant-numeric: tabular-nums; }
 .winner-box { text-align: right; }
 .winner-name { font-weight: 700; color: var(--cream); font-size: 14px; }
+.pot-toggle {
+  display: flex; align-items: center; gap: 6px; background: none; border: none; padding: 0;
+  color: inherit; cursor: pointer; margin-bottom: 2px;
+}
+.pot-chevron { font-size: 10px; color: var(--cream-dim); line-height: 1; }
+.pot-breakdown { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
+.pot-line {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 4px 0; font-size: 13px; color: var(--cream-dim);
+}
+.pot-line b { color: var(--cream); font-weight: 800; font-variant-numeric: tabular-nums; }
+.pot-line-strong { color: var(--cream); font-weight: 700; }
+.pot-line-strong b { color: var(--brass); }
 
 .input {
   width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border);
