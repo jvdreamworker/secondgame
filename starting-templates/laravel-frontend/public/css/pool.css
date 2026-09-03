@@ -88,6 +88,11 @@ button, input { font-family: inherit; }
   color: inherit; text-align: left; cursor: pointer;
 }
 .row-card-static { cursor: default; gap: 8px; }
+/* This Week card: tappable name area + always-visible 💰 pay button */
+.row-card-pay { cursor: default; gap: 10px; }
+.row-card-open { flex: 1; min-width: 0; background: none; border: none; padding: 0; text-align: left; color: inherit; cursor: pointer; font: inherit; }
+.row-card-tail { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.pay-btn { background: var(--green-dim); color: #BFE3C6; }
 .row-dim { opacity: .5; }
 .row-title { font-weight: 700; color: var(--cream); }
 .row-title-btn { background: none; border: none; text-align: left; color: inherit; cursor: pointer; padding: 0; flex: 1; }
@@ -171,6 +176,16 @@ button, input { font-family: inherit; }
   border-radius: 12px; padding: 12px; margin-bottom: 12px; font-size: 14px;
   background: var(--red-dim); border: 1px solid var(--red); color: #F2C9C2;
 }
+.alert-box-ok { background: var(--green-dim); border-color: var(--green); color: #BFE3C6; }
+
+/* financial summary at the top of the pay modal */
+.pay-summary { padding: 12px 14px; }
+.pay-summary-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  padding: 4px 0; font-size: 13px; color: var(--cream-dim);
+}
+.pay-summary-row b { color: var(--cream); font-weight: 800; }
+.dim-xs { font-size: 10px; opacity: .7; }
 
 .scroll-list { max-height: 160px; overflow-y: auto; border: 1px solid var(--border); border-radius: 12px; }
 .pick-row {

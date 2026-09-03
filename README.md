@@ -50,7 +50,7 @@ with no password (WAMP default).
 | POST | `/api/players/import` | multipart `.xlsx` upload — cols 1=name, 2=team_number, 3=team (falls back to col 4 for the old layout). **Merges** by name+team_number: matched players updated in place (id + entries kept), new rows inserted, players absent from the file deactivated. Returns `{imported, updated, deactivated, skipped, players[]}` |
 | PATCH | `/api/players/{player}` | partial update (name / team_number / team / active) |
 | PATCH | `/api/players/team/{teamNumber}/name` | bulk-set the team **name** on every current-season player with that team number |
-| PUT | `/api/entries` | upsert by `(player_id, week)` |
+| PUT | `/api/entries` | upsert by `(player_id, week)` — body `{player_id, week, amount, status, note, received_on}` (`received_on` = `"YYYY-MM-DD"` cash-received date or `null`) |
 | DELETE | `/api/entries/{player}/{week}` | remove (204 even if absent) |
 | PUT | `/api/weekly-results/{week}` | upsert result for the current season |
 | PATCH | `/api/config` | update the current season's settings |

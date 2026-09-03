@@ -12,8 +12,9 @@
  *         -> { config, players: [...], entries: [...], results: [...] }
  *   POST  /api/players                body: { client_id, name, team, active }
  *   PATCH /api/players/:client_id     body: { name?, team?, active? }
- *   PUT   /api/entries                body: { player_id, week, amount, status, note }
- *         (upsert by unique [player_id, week] — server returns canonical row)
+ *   PUT   /api/entries                body: { player_id, week, amount, status, note, received_on }
+ *         (upsert by unique [player_id, week] — server returns canonical row;
+ *          received_on is a "YYYY-MM-DD" string or null)
  *   DELETE /api/entries/:player_id/:week
  *   PUT   /api/weekly-results/:week   body: { score, winner_player_id, payout, note }
  *   POST  /api/players/import         multipart: file=<.xlsx>; merges by name+team_number

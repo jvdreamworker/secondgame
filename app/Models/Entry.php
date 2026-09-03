@@ -13,11 +13,13 @@ class Entry extends Model
         'amount',
         'status',
         'note',
+        'received_on',
     ];
 
     protected $casts = [
         'amount' => 'float',
         'week_number' => 'integer',
+        'received_on' => 'date:Y-m-d',
     ];
 
     public function player(): BelongsTo

@@ -90,14 +90,31 @@ class PoolApiTest extends TestCase
 
         $this->actingAs($this->operator)->putJson('/api/entries', [
             'player_id' => $player->id, 'week' => 4, 'amount' => 5, 'status' => 'paid', 'note' => 'lump sum',
-        ])->assertOk()->assertJson(['id' => $player->id.':4', 'week' => 4, 'status' => 'paid']);
+            'received_on' => '2026-09-02',
+        ])->assertOk()->assertJson([
+            'id' => $player->id.':4', 'week' => 4, 'status' => 'paid', 'received_on' => '2026-09-02',
+        ]);
 
         $this->actingAs($this->operator)->putJson('/api/entries', [
             'player_id' => $player->id, 'week' => 4, 'amount' => null, 'status' => 'covered', 'note' => '',
-        ])->assertOk();
+        ])->assertOk()->assertJson(['received_on' => null]);
 
         $this->assertDatabaseCount('entries', 1);
-        $this->assertDatabaseHas('entries', ['player_id' => $player->id, 'week_number' => 4, 'status' => 'covered']);
+        $this->assertDatabaseHas('entries', ['player_id' => $player->id, 'week_number' => 4, 'status' => 'covered', 'received_on' => null]);
+    }
+
+    public function test_entry_received_on_survives_the_bundle_round_trip(): void
+    {
+        $player = Player::create(['season_id' => $this->season->id, 'name' => 'Y', 'team' => 'T', 'active' => true]);
+        Entry::create([
+            'player_id' => $player->id, 'week_number' => 6, 'status' => 'paid', 'amount' => 32,
+            'note' => '', 'received_on' => '2026-09-10',
+        ]);
+
+        $this->actingAs($this->operator)
+            ->getJson("/api/seasons/{$this->season->id}/bundle")
+            ->assertOk()
+            ->assertJson(['entries' => [['week' => 6, 'received_on' => '2026-09-10']]]);
     }
 
     public function test_entry_delete_is_forgiving(): void

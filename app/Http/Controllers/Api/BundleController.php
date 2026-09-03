@@ -94,6 +94,7 @@ class BundleController extends Controller
             'amount' => is_null($e->amount) ? null : (float) $e->amount,
             'status' => $e->status,
             'note' => $e->note ?? '',
+            'received_on' => $e->received_on?->format('Y-m-d'),
         ];
     }
 }

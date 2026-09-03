@@ -24,6 +24,7 @@ class EntryController extends Controller
             'amount' => ['nullable', 'numeric'],
             'status' => ['required', 'in:paid,covered,exempt'],
             'note' => ['nullable', 'string'],
+            'received_on' => ['nullable', 'date'],
         ]);
 
         $entry = Entry::updateOrCreate(
@@ -32,6 +33,7 @@ class EntryController extends Controller
                 'amount' => $data['amount'] ?? null,
                 'status' => $data['status'],
                 'note' => $data['note'] ?? '',
+                'received_on' => $data['received_on'] ?? null,
             ],
         );
 
@@ -42,6 +44,7 @@ class EntryController extends Controller
             'amount' => is_null($entry->amount) ? null : (float) $entry->amount,
             'status' => $entry->status,
             'note' => $entry->note ?? '',
+            'received_on' => $entry->received_on?->format('Y-m-d'),
         ]);
     }
 

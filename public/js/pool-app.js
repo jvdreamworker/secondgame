@@ -159,6 +159,26 @@ function playerTotal(state, playerId, weeks) {
   return sum;
 }
 
+// First week from the floor (week after the last winner, or season start)
+// that has no entry on this player's card — i.e. where a payment should
+// start. Looks across the whole season, not just up to the current week, so
+// it also finds the next week to pay for someone who's already paid ahead.
+// Returns null when every week from the floor already has an entry.
+function nextUnpaidWeek(state, playerId, weeks, lastWinnerWeek) {
+  const floor = lastWinnerWeek || weeks[0] - 1;
+  for (const w of weeks) {
+    if (w > floor && !getEntry(state, playerId, w)) return w;
+  }
+  return null;
+}
+
+// Local YYYY-MM-DD for today (not toISOString, which is UTC and can roll a day).
+function todayISO() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 // Per-player standing for the current week. Mirrors the backend's
 // PoolCalculator::weeksOwed / lastWinnerWeekBefore (there is no per-player
 // stat object — the dashboard is offline and computes this locally).
@@ -225,7 +245,7 @@ const ROSTER_SEED = [{"name": "Aponte, Juan", "team": "Team 13", "active": false
 const state = {
   config: { ...DEFAULT_CONFIG },
   players: [],              // [{id, name, team, active}]
-  entries: new Map(),       // key `${player_id}:${week}` -> {id?, player_id, week, amount, status, note}
+  entries: new Map(),       // key `${player_id}:${week}` -> {id?, player_id, week, amount, status, note, received_on}
   results: new Map(),       // week -> {week, score, winner_player_id, payout, note}
   tab: "dashboard",
   week: null,
@@ -394,11 +414,14 @@ async function importRoster() {
   render();
 }
 
-async function setEntry(playerId, week, { amount, status, note }) {
-  const rec = { id: entryKey(playerId, week), player_id: playerId, week, amount: amount ?? null, status, note: note || "" };
+async function setEntry(playerId, week, { amount, status, note, receivedOn }) {
+  const rec = {
+    id: entryKey(playerId, week), player_id: playerId, week,
+    amount: amount ?? null, status, note: note || "", received_on: receivedOn ?? null,
+  };
   state.entries.set(entryKey(playerId, week), rec);
   await idb.put("entries", rec);
-  Sync.enqueue({ type: "entry.upsert", payload: { player_id: playerId, week, amount: rec.amount, status, note: rec.note } });
+  Sync.enqueue({ type: "entry.upsert", payload: { player_id: playerId, week, amount: rec.amount, status, note: rec.note, received_on: rec.received_on } });
 }
 
 async function clearEntry(playerId, week) {
@@ -481,13 +504,17 @@ function renderDashboard() {
       if (key !== lastTeam) { header = `<div class="list-group-label">${escapeHtml(key)}</div>`; lastTeam = key; }
     }
     return `${header}
-        <button class="row-card" data-action="open-pay" data-player="${p.id}" data-week="${week}">
-          <div>
+        <div class="row-card row-card-pay">
+          <button class="row-card-open" data-action="open-pay" data-player="${p.id}">
             <div class="row-title">${escapeHtml(p.name)}</div>
             <div class="dim-sm">${escapeHtml(teamLabel(p))}</div>
+          </button>
+          <div class="row-card-tail">
+            ${standingPill(st)}
+            <button class="icon-btn icon-btn-sm pay-btn" data-action="open-pay" data-player="${p.id}"
+                    title="Record a payment" aria-label="Record a payment for ${escapeHtml(p.name)}">&#128176;</button>
           </div>
-          ${standingPill(st)}
-        </button>`;
+        </div>`;
   }).join("");
 
   const winner = stat.winnerId ? state.players.find((p) => p.id === stat.winnerId) : null;
@@ -548,28 +575,46 @@ function modalShell(title, body) {
     <div class="modal-body">${body}<button class="btn btn-outline w-full mt-3" data-action="close-modal">Close</button></div>`;
 }
 
-function renderPayModal(playerId, week) {
+function renderPayModal(playerId) {
   const player = state.players.find((p) => p.id === playerId);
   if (!player) return modalShell("Player not found", `<p class="dim-sm">That player isn't in the roster on this device.</p>`);
-  if (!Number.isFinite(week)) week = currentWeek();
-  const { weeks, stats } = computeStats(state);
-  const existing = getEntry(state, playerId, week);
-  const lastWinner = lastWinnerWeekBefore(stats, weeks, week);
-  const owed = weeksOwed(state, playerId, weeks, week, lastWinner);
-  const hasAnyHistory = weeks.some((w) => getEntry(state, playerId, w));
-  const isCatchUp = !hasAnyHistory && owed.length > 1;
-  const startWeek = owed.length ? owed[0] : week;
 
-  if (existing) {
+  const { weeks, stats } = computeStats(state);
+  const lastWeek = weeks[weeks.length - 1];
+  // Most recent winner in the whole season — the pool "floor": weeks on or
+  // before it are settled and don't count toward what a player owes.
+  const seasonWinner = lastWinnerWeekBefore(stats, weeks, lastWeek + 1);
+
+  // Financial summary — measured from that floor, the same basis as the
+  // card's PAID pill (playerStanding).
+  const standing = playerStanding(state, playerId, weeks, lastWeek, seasonWinner, state.config.entryFee);
+  const totalPaid = playerTotal(state, playerId, weeks);
+  const summaryHtml = `
+    <div class="card pay-summary">
+      <div class="pay-summary-row"><span>Paid through</span><b>${standing.paidThru ? `Week ${standing.paidThru}` : "Nothing paid yet"}</b></div>
+      <div class="pay-summary-row"><span>Total paid</span><b>${fmtMoney(totalPaid)}</b></div>
+      <div class="pay-summary-row"><span>To pay off season <span class="dim-xs">thru Wk ${lastWeek}</span></span>
+        <b>${standing.owesAmount > 0 ? `${fmtMoney(standing.owesAmount)} left` : "$0 — fully paid up!"}</b></div>
+    </div>`;
+
+  const startWeek = nextUnpaidWeek(state, playerId, weeks, seasonWinner);
+
+  if (startWeek === null) {
     return `
     <div class="modal-header"><h2>${escapeHtml(player.name)}</h2><button class="icon-btn" data-action="close-modal">&times;</button></div>
-    <div class="modal-body text-center">
-      <div class="dim-sm">${weekHeading(week)} — already recorded</div>
-      <div class="big-amount mt-1 mb-3">${existing.status === "covered" ? "Covered (P)" : existing.status === "exempt" ? "Exempt" : fmtMoney(existing.amount)}</div>
-      <p class="dim-sm mb-4">To fix a mistake, use the player's week grid on their detail page — it lets you edit any single week directly.</p>
-      <button class="btn btn-outline w-full" data-action="close-modal">Close</button>
+    <div class="modal-body">
+      <div class="dim-sm mb-3">${escapeHtml(teamLabel(player))}</div>
+      ${summaryHtml}
+      <div class="alert-box alert-box-ok">&#10003; Fully paid through Week ${lastWeek} — nothing to record.</div>
+      <button class="btn btn-outline w-full mt-3" data-action="close-modal">Close</button>
     </div>`;
   }
+
+  // How far behind they are as of the current dashboard week — drives the
+  // catch-up warning and the default number of weeks to pay.
+  const owed = weeksOwed(state, playerId, weeks, currentWeek(), seasonWinner);
+  const hasAnyHistory = weeks.some((w) => getEntry(state, playerId, w));
+  const isCatchUp = !hasAnyHistory && owed.length > 1;
 
   const quickOptions = [...new Set([1, 5, 10, owed.length > 1 ? owed.length : null, weeks.length - weeks.indexOf(startWeek)].filter(Boolean))].sort((a, b) => a - b);
   const defaultN = Math.max(1, owed.length || 1);
@@ -577,11 +622,12 @@ function renderPayModal(playerId, week) {
   return `
   <div class="modal-header"><h2>${escapeHtml(player.name)}</h2><button class="icon-btn" data-action="close-modal">&times;</button></div>
   <div class="modal-body">
-    <div class="dim-sm mb-3">${escapeHtml(teamLabel(player))} · ${weekHeading(week)}</div>
+    <div class="dim-sm mb-3">${escapeHtml(teamLabel(player))} · starting ${weekHeading(startWeek)}</div>
+    ${summaryHtml}
     ${isCatchUp ? `
       <div class="alert-box">
         No entries on record for ${escapeHtml(player.name)}.
-        ${lastWinner ? `Last winner was week ${lastWinner}.` : "This is the start of the season."}
+        ${seasonWinner ? `Last winner was week ${seasonWinner}.` : "This is the start of the season."}
         To join the pot fairly, they owe <b>${owed.length}</b> week${owed.length !== 1 ? "s" : ""}
         (weeks ${owed[0]}–${owed[owed.length - 1]}).
       </div>` : ""}
@@ -595,6 +641,9 @@ function renderPayModal(playerId, week) {
     <label class="label-xs">Amount (${state.config.entryFee}/wk suggested)</label>
     <input type="number" class="input input-amount" id="pay-amount" value="${defaultN * state.config.entryFee}" />
 
+    <label class="label-xs">Date received</label>
+    <input type="date" class="input" id="pay-received" value="${todayISO()}" />
+
     <label class="checkbox-row">
       <input type="checkbox" id="pay-exempt" />
       Exempt these weeks (e.g. out sick / COVID — no charge)
@@ -607,7 +656,7 @@ function renderPayModal(playerId, week) {
     <div class="btn-row">
       <button class="btn btn-outline flex-1" data-action="close-modal">Cancel</button>
       <button class="btn btn-green flex-1" data-action="submit-pay"
-              data-player="${playerId}" data-week="${week}" data-start="${startWeek}" data-n="${defaultN}">Record</button>
+              data-player="${playerId}" data-week="${startWeek}" data-start="${startWeek}" data-n="${defaultN}">Record</button>
     </div>
   </div>`;
 }
@@ -1045,7 +1094,7 @@ document.addEventListener("click", async (e) => {
       break;
     }
     case "open-pay":
-      openModal(renderPayModal(el.dataset.player, Number(el.dataset.week)));
+      openModal(renderPayModal(el.dataset.player));
       break;
     case "open-draw":
       state._drawWinnerId = null;
@@ -1128,7 +1177,8 @@ document.addEventListener("click", async (e) => {
     }
     case "cell-set": {
       const status = el.dataset.status;
-      await setEntry(el.dataset.player, Number(el.dataset.week), { amount: null, status, note: "" });
+      const prev = getEntry(state, el.dataset.player, Number(el.dataset.week));
+      await setEntry(el.dataset.player, Number(el.dataset.week), { amount: null, status, note: "", receivedOn: prev?.received_on || null });
       closeModal();
       render();
       break;
@@ -1136,7 +1186,8 @@ document.addEventListener("click", async (e) => {
     case "cell-save-amount": {
       const val = document.getElementById("cell-amount").value;
       if (val === "") { closeModal(); break; }
-      await setEntry(el.dataset.player, Number(el.dataset.week), { amount: parseFloat(val), status: "paid", note: "" });
+      const prev = getEntry(state, el.dataset.player, Number(el.dataset.week));
+      await setEntry(el.dataset.player, Number(el.dataset.week), { amount: parseFloat(val), status: "paid", note: "", receivedOn: prev?.received_on || null });
       closeModal();
       render();
       break;
@@ -1235,6 +1286,8 @@ async function submitPay(playerId, startWeek, numWeeks) {
   const exempt = document.getElementById("pay-exempt")?.checked;
   const note = document.getElementById("pay-note")?.value || "";
   const amount = exempt ? 0 : parseFloat(document.getElementById("pay-amount")?.value || "0");
+  // Exempt weeks are a no-charge record — no cash changed hands, so no date.
+  const receivedOn = exempt ? null : (document.getElementById("pay-received")?.value || null);
   const coverWeeks = previewWeeks(startWeek, n, weeks, playerId);
 
   if (!coverWeeks.length) {
@@ -1248,7 +1301,7 @@ async function submitPay(playerId, startWeek, numWeeks) {
     const w = coverWeeks[i];
     const status = exempt ? "exempt" : i === 0 ? "paid" : "covered";
     const amt = exempt ? null : i === 0 ? amount : null;
-    await setEntry(playerId, w, { amount: amt, status, note });
+    await setEntry(playerId, w, { amount: amt, status, note, receivedOn });
   }
   closeModal();
   render();
