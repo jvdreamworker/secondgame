@@ -78,14 +78,12 @@ button, input { font-family: inherit; }
   color: inherit; cursor: pointer; margin-bottom: 2px;
 }
 .pot-chevron { font-size: 10px; color: var(--cream-dim); line-height: 1; }
-.pot-breakdown { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
-.pot-line {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
-  padding: 4px 0; font-size: 13px; color: var(--cream-dim);
-}
-.pot-line b { color: var(--cream); font-weight: 800; font-variant-numeric: tabular-nums; }
-.pot-line-strong { color: var(--cream); font-weight: 700; }
-.pot-line-strong b { color: var(--brass); }
+/* expanded pot: a wrapping row of pot-card-style stat boxes */
+.pot-cards { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+.pot-stat { flex: 1 1 130px; margin-bottom: 0; }
+.pot-stat .label-xs { margin-top: 0; }
+.pot-stat-strong { border-color: var(--brass-dim); }
+.pot-stat-strong .label-xs { color: var(--brass); }
 
 .input {
   width: 100%; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border);

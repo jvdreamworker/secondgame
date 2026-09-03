@@ -6,7 +6,7 @@
  * Bump CACHE_VERSION whenever you deploy changed static assets so clients
  * pick up the new files instead of serving stale ones from cache.
  */
-const CACHE_VERSION = "pool-shell-v13";
+const CACHE_VERSION = "pool-shell-v14";
 const SHELL_FILES = [
   "/pool",
   "/css/pool.css",

@@ -557,16 +557,58 @@ function renderDashboard() {
 
   // Expandable pot breakdown — collapsed by default on every load (privacy:
   // players may be looking over the operator's shoulder). Session-only, never
-  // persisted, so it resets on reload.
+  // persisted, so it resets on reload. Expanded, "This week's pot" becomes the
+  // first of a wrapping row of stat cards, each in the pot-card style.
   const potExpanded = !!state._potExpanded;
   const rollover = stat.pot - stat.count;
-  const potBreakdown = potExpanded ? `
-      <div class="pot-breakdown">
-        <div class="pot-line"><span>Rollover from last week</span><b>${fmtMoney(rollover)}</b></div>
-        <div class="pot-line"><span>Collected this week</span><b>${fmtMoney(collectedInWeek(state, week))}</b></div>
-        <div class="pot-line pot-line-strong"><span>Total in hand</span><b>${fmtMoney(totalInHand(state))}</b></div>
-        <div class="pot-line"><span>Owes this week</span><b>${fmtMoney(standings.reduce((s, { st }) => s + st.owesAmount, 0))}</b></div>
-      </div>` : "";
+  const owesThisWeek = standings.reduce((s, { st }) => s + st.owesAmount, 0);
+
+  const potStat = (label, value, extraClass = "") =>
+    `<div class="card pot-stat ${extraClass}">
+       <span class="label-xs">${label}</span>
+       <div class="pot-amount">${fmtMoney(value)}</div>
+     </div>`;
+
+  const gameControls = `
+      ${stat.score !== "" ? `<div class="dim-sm mt-2">Score pulled: <b>${escapeHtml(stat.score)}</b></div>` : ""}
+      <button class="btn btn-outline w-full mt-3" data-action="open-draw" data-week="${week}">
+        ${stat.winnerId ? "Edit score / winner" : "Enter score & winner"}
+      </button>`;
+
+  const potSection = potExpanded ? `
+    <div class="pot-cards">
+      <div class="card pot-stat">
+        <button class="pot-toggle" data-action="toggle-pot" aria-expanded="true">
+          <span class="label-xs">This week's pot</span><span class="pot-chevron">&#9652;</span>
+        </button>
+        <div class="pot-amount">${fmtMoney(stat.pot)}</div>
+      </div>
+      ${potStat("Rollover", rollover)}
+      ${potStat("Collected this week", collectedInWeek(state, week))}
+      ${potStat("Total in hand", totalInHand(state), "pot-stat-strong")}
+      ${potStat("Owes this week", owesThisWeek)}
+    </div>
+    <div class="card pot-card">
+      ${winner ? `<div class="dim-sm"><b>${escapeHtml(winner.name)}</b> won ${fmtMoney(stat.payout)}</div>` : ""}
+      ${gameControls}
+    </div>` : `
+    <div class="card pot-card">
+      <div class="pot-card-top">
+        <div>
+          <button class="pot-toggle" data-action="toggle-pot" aria-expanded="false">
+            <span class="label-xs">This week's pot</span><span class="pot-chevron">&#9662;</span>
+          </button>
+          <div class="pot-amount">${fmtMoney(stat.pot)}</div>
+        </div>
+        ${winner ? `
+          <div class="winner-box">
+            <div class="dim-sm">won</div>
+            <div class="winner-name">${escapeHtml(winner.name)}</div>
+            <div class="dim-sm">${fmtMoney(stat.payout)}</div>
+          </div>` : ""}
+      </div>
+      ${gameControls}
+    </div>`;
 
   return `
   <div class="px-4 pt-4 pb-24">
@@ -580,29 +622,7 @@ function renderDashboard() {
       <button class="icon-btn" data-action="week-next" ${week >= weeks[weeks.length - 1] ? "disabled" : ""}>&#8594;</button>
     </div>
 
-    <div class="card pot-card">
-      <div class="pot-card-top">
-        <div>
-          <button class="pot-toggle" data-action="toggle-pot" aria-expanded="${potExpanded}">
-            <span class="label-xs">This week's pot</span>
-            <span class="pot-chevron">${potExpanded ? "&#9652;" : "&#9662;"}</span>
-          </button>
-          <div class="pot-amount">${fmtMoney(stat.pot)}</div>
-          ${potExpanded ? `<div class="dim-sm">${stat.count} paid this week</div>` : ""}
-        </div>
-        ${winner ? `
-          <div class="winner-box">
-            <div class="dim-sm">won</div>
-            <div class="winner-name">${escapeHtml(winner.name)}</div>
-            <div class="dim-sm">${fmtMoney(stat.payout)}</div>
-          </div>` : ""}
-      </div>
-      ${potBreakdown}
-      ${stat.score !== "" ? `<div class="dim-sm mt-2">Score pulled: <b>${escapeHtml(stat.score)}</b></div>` : ""}
-      <button class="btn btn-outline w-full mt-3" data-action="open-draw" data-week="${week}">
-        ${stat.winnerId ? "Edit score / winner" : "Enter score & winner"}
-      </button>
-    </div>
+    ${potSection}
 
     <div class="controls-row mt-3">
       <div class="chip-row">
