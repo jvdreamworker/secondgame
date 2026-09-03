@@ -172,6 +172,19 @@ function nextUnpaidWeek(state, playerId, weeks, lastWinnerWeek) {
   return null;
 }
 
+// Only the weeks that are actually bowled — those with a scheduled date in
+// WEEK_DATES. weeksArray()/computeStats() give `startWeek + a plain count`,
+// which runs outside the real 32-week calendar when the season config is
+// wider than it should be (e.g. startWeek 1, or totalWeeks 34). A player can
+// only owe for — and only pay toward — weeks that really happen, so all
+// owed/"pay off season" math filters through this. Pot math keeps the raw
+// range (trailing empty weeks are harmless and it must stay in lockstep with
+// the backend PoolCalculator).
+function scheduledWeeks(weeks) {
+  const real = weeks.filter((w) => WEEK_DATES[w] !== undefined);
+  return real.length ? real : weeks;
+}
+
 // Local YYYY-MM-DD (not toISOString, which is UTC and can roll a day).
 function isoDate(d) {
   const pad = (n) => String(n).padStart(2, "0");
@@ -500,7 +513,8 @@ function standingPill(st) {
 
 /* ============================== DASHBOARD ============================== */
 function renderDashboard() {
-  const { weeks, stats } = computeStats(state);
+  const { weeks: allWeeks, stats } = computeStats(state);
+  const weeks = scheduledWeeks(allWeeks); // owe math + week-nav bounds: real weeks only
   const week = currentWeek();
   const stat = stats[week] || blankStat(week);
   const query = state._query || "";
@@ -652,7 +666,8 @@ function renderPayModal(playerId) {
   const player = state.players.find((p) => p.id === playerId);
   if (!player) return modalShell("Player not found", `<p class="dim-sm">That player isn't in the roster on this device.</p>`);
 
-  const { weeks, stats } = computeStats(state);
+  const { weeks: allWeeks, stats } = computeStats(state);
+  const weeks = scheduledWeeks(allWeeks); // only real bowling weeks are oweable / payable
   const lastWeek = weeks[weeks.length - 1];
   // Most recent winner in the whole season — the pool "floor": weeks on or
   // before it are settled and don't count toward what a player owes.
@@ -1348,7 +1363,7 @@ function applyNumWeeks(n) {
   if (amountInput) amountInput.value = n * state.config.entryFee;
   const startBtn = document.querySelector("[data-action='submit-pay']");
   if (startBtn) {
-    const { weeks } = computeStats(state);
+    const weeks = scheduledWeeks(computeStats(state).weeks);
     const preview = previewWeeks(Number(startBtn.dataset.start), n, weeks, startBtn.dataset.player);
     const previewEl = document.getElementById("pay-preview");
     if (previewEl) previewEl.innerHTML = `Will mark weeks <b>${preview.join(", ")}</b>`;
@@ -1357,7 +1372,7 @@ function applyNumWeeks(n) {
 }
 
 async function submitPay(playerId, startWeek, numWeeks) {
-  const { weeks } = computeStats(state);
+  const weeks = scheduledWeeks(computeStats(state).weeks); // never record entries for weeks that aren't bowled
   const startBtn = document.querySelector("[data-action='submit-pay']");
   const n = Number.isFinite(numWeeks) ? numWeeks : Number(startBtn?.dataset.n || 1);
   const exempt = document.getElementById("pay-exempt")?.checked;
